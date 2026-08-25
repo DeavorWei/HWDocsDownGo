@@ -2,9 +2,11 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -460,4 +462,40 @@ func (h *ServerHandler) broadcastWS(data interface{}) {
 	for conn := range h.wsClients {
 		conn.WriteJSON(data)
 	}
+}
+
+// Shutdown 优雅关闭系统：终止爬虫与下载，并退出主进程
+func (h *ServerHandler) Shutdown(c *gin.Context) {
+	logger.Info("📢 收到 Web 端退出系统请求，正在执行优雅停机...")
+
+	// 1. 停止爬虫任务
+	if h.crawlerEngine != nil {
+		h.crawlerEngine.Stop()
+	}
+
+	// 2. 终止所有下载任务
+	if h.downManager != nil {
+		h.downManager.StopAll()
+	}
+
+	// 3. 广播停机通知给所有 WebSocket 客户端
+	h.broadcastWS(map[string]interface{}{
+		"type": "SYSTEM_SHUTDOWN",
+		"data": gin.H{"message": "系统正在安全关闭"},
+	})
+
+	// 4. 返回 HTTP 成功响应
+	success(c, gin.H{
+		"message": "系统正在优雅关闭，所有正在运行的任务已终止",
+	})
+
+	// 5. 延迟异步退出进程，确保 HTTP/WS 响应正常发出
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		logger.Info("==========================================================")
+		logger.Info("     华为产品文档下载管理器 - HWDocsDownGo 已安全退出     ")
+		logger.Info("==========================================================")
+		_ = logger.Sync()
+		os.Exit(0)
+	}()
 }

@@ -334,3 +334,11 @@ func formatLogMsg(msg string, fields ...zap.Field) string {
 	}
 	return res
 }
+
+// Sync 刷新并同步日志缓冲区
+func Sync() error {
+	if L != nil {
+		return L.Sync()
+	}
+	return nil
+}

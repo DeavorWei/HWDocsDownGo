@@ -208,3 +208,14 @@ func (dm *DownloadManager) executeTask(taskID string) {
 	delete(dm.runners, taskID)
 	dm.mu.Unlock()
 }
+
+// StopAll 优雅终止所有正在运行的下载任务
+func (dm *DownloadManager) StopAll() {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	for tid, runner := range dm.runners {
+		runner.Cancel()
+		logger.Info("退出系统: 已终止下载任务", zap.String("taskId", tid))
+	}
+	dm.runners = make(map[string]*DownloadTaskRunner)
+}

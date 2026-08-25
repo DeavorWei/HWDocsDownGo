@@ -157,9 +157,23 @@
           </button>
         </nav>
 
+        <!-- 退出系统按钮 -->
+        <div class="px-3 py-2 border-t border-slate-800 bg-slate-950/40">
+          <button
+            @click="confirmShutdown"
+            class="w-full flex items-center justify-center px-3 py-2 rounded-lg text-xs font-medium text-rose-300 hover:text-white bg-rose-950/40 hover:bg-rose-600 border border-rose-800/50 hover:border-rose-500 transition-all duration-150 group cursor-pointer shadow-xs"
+            title="一键优雅关闭后台服务并终止正在进行的任务"
+          >
+            <i
+              class="fa-solid fa-power-off w-4 text-center mr-2 text-rose-400 group-hover:text-white transition-colors"
+            ></i>
+            <span>退出系统</span>
+          </button>
+        </div>
+
         <!-- 底部状态栏 -->
         <div
-          class="p-4 border-t border-slate-800 bg-slate-950/20 text-xs text-slate-400 flex items-center justify-between"
+          class="p-4 border-t border-slate-800/80 bg-slate-950/20 text-xs text-slate-400 flex items-center justify-between"
         >
           <div class="flex items-center space-x-2">
             <span
@@ -1616,6 +1630,90 @@
         </div>
       </div>
 
+      <!-- 退出系统确认弹窗 -->
+      <div
+        v-if="showShutdownModal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs transition-opacity"
+      >
+        <div
+          class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-scale-in"
+        >
+          <div class="flex items-center space-x-3.5 mb-4">
+            <div
+              class="w-11 h-11 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0 border border-rose-200/80"
+            >
+              <i class="fa-solid fa-power-off text-lg text-rose-600"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-900">确认退出系统？</h3>
+              <p class="text-xs text-slate-500 mt-0.5">将安全停止后台服务与运行中的任务</p>
+            </div>
+          </div>
+
+          <div
+            class="text-xs text-slate-600 bg-slate-50 p-4 rounded-xl border border-slate-200/80 mb-6 space-y-2 leading-relaxed"
+          >
+            <div class="flex items-center space-x-1.5 text-amber-700 font-semibold mb-1">
+              <i class="fa-solid fa-triangle-exclamation text-amber-500"></i>
+              <span>退出操作说明：</span>
+            </div>
+            <p>1. 系统将自动<strong>终止正在运行的爬虫与下载任务</strong>；</p>
+            <p>2. 数据库与本地日志将安全写入并刷新；</p>
+            <p>3. 后台服务进程（HWDocsDownGo）将被安全关闭。</p>
+          </div>
+
+          <div class="flex items-center justify-end space-x-3">
+            <button
+              @click="showShutdownModal = false"
+              :disabled="isShuttingDown"
+              class="px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition border border-slate-300 cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              @click="executeShutdown"
+              :disabled="isShuttingDown"
+              class="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition shadow-sm flex items-center space-x-1.5 cursor-pointer"
+            >
+              <i
+                class="fa-solid"
+                :class="isShuttingDown ? 'fa-spinner animate-spin' : 'fa-power-off'"
+              ></i>
+              <span>{{ isShuttingDown ? '正在安全关闭...' : '确认退出' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 系统已安全退出全屏遮罩 -->
+      <div
+        v-if="isSystemTerminated"
+        class="fixed inset-0 z-[999] bg-slate-950/95 backdrop-blur-md flex items-center justify-center p-4 text-center text-white"
+      >
+        <div
+          class="max-w-md w-full bg-slate-900/90 rounded-2xl p-8 border border-slate-800 shadow-2xl space-y-5"
+        >
+          <div
+            class="w-16 h-16 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto border border-emerald-500/30 shadow-inner"
+          >
+            <i class="fa-solid fa-check text-2xl"></i>
+          </div>
+          <div>
+            <h2 class="text-xl font-bold text-white mb-2">系统已安全退出</h2>
+            <p class="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto">
+              后台服务已优雅关闭，所有任务已终止，数据已完整保存。<br />
+              您可以直接关闭此浏览器标签页。
+            </p>
+          </div>
+          <div
+            class="inline-flex items-center space-x-2 text-xs text-slate-400 bg-slate-950/80 px-4 py-2.5 rounded-xl border border-slate-800 text-left"
+          >
+            <i class="fa-solid fa-circle-info text-blue-400 flex-shrink-0"></i>
+            <span>如需重新使用，请在本地重新启动 HWDocsDownGo 程序。</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 全局轻提示 Toast -->
       <div
         v-if="toast.show"
@@ -1640,6 +1738,11 @@
           const crawlerRunning = ref(false);
           const loadingDocs = ref(false);
           const lastScanResult = ref(null);
+
+          // 退出系统状态
+          const showShutdownModal = ref(false);
+          const isShuttingDown = ref(false);
+          const isSystemTerminated = ref(false);
 
           // 爬虫控制与日志
           const crawlerScope = ref({
@@ -2298,6 +2401,9 @@
                   fetchDocCategories();
                   fetchStats();
                   loadDocuments();
+                } else if (msg.type === "SYSTEM_SHUTDOWN") {
+                  showShutdownModal.value = false;
+                  isSystemTerminated.value = true;
                 }
               } catch (err) {
                 console.error(err);
@@ -2306,8 +2412,31 @@
 
             ws.onclose = () => {
               wsConnected.value = false;
-              setTimeout(initWebSocket, 3000);
+              if (!isSystemTerminated.value) {
+                setTimeout(initWebSocket, 3000);
+              }
             };
+          };
+
+          // ---------------- 退出系统 ----------------
+          const confirmShutdown = () => {
+            showShutdownModal.value = true;
+          };
+
+          const executeShutdown = async () => {
+            isShuttingDown.value = true;
+            try {
+              await fetch("/api/system/shutdown", {
+                method: "POST",
+              });
+            } catch (err) {
+              console.warn("服务关闭中:", err);
+            }
+            setTimeout(() => {
+              showShutdownModal.value = false;
+              isShuttingDown.value = false;
+              isSystemTerminated.value = true;
+            }, 300);
           };
 
           // ---------------- 样式与工具函数 ----------------
@@ -2502,6 +2631,11 @@
             stopCrawler,
             saveSettings,
             openLocalFolder,
+            showShutdownModal,
+            isShuttingDown,
+            isSystemTerminated,
+            confirmShutdown,
+            executeShutdown,
             getDocTypeBadgeClass,
             getDocIcon,
             getDocUrl,
