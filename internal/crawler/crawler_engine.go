@@ -147,14 +147,14 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 				if err == nil && len(docs) > 0 {
 					atomic.AddInt64(&totalDocsCount, int64(len(docs)))
 					send("   %s 📄 型号 [%s] 发现并入库 %d 篇产品文档", workerTag, prod.Name, len(docs))
-					logger.Info("爬虫工作协程抓取到文档",
+					logger.Info(fmt.Sprintf("%s 📄 型号 [%s] 发现并入库 %d 篇产品文档", workerTag, prod.Name, len(docs)),
 						zap.Int("workerId", workerID),
 						zap.String("product", prod.Name),
 						zap.Int("docCount", len(docs)),
 					)
 				} else if IsWsfCheckError(err) {
 					wsfBlocked.Store(true)
-					logger.Warn("爬虫工作协程触发华为网关安全拦截",
+					logger.Warn(fmt.Sprintf("%s 触发华为网关安全拦截", workerTag),
 						zap.Int("workerId", workerID),
 						zap.String("product", prod.Name),
 					)

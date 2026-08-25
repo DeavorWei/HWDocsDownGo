@@ -431,7 +431,7 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 	// 4. 批量入库
 	if len(docs) > 0 {
 		d.repo.UpsertDocuments(docs)
-		logger.Info("🎉 成功解析分类标签、识别新旧版本并入库产品文档",
+		logger.Debug("成功解析分类标签、识别新旧版本并入库产品文档",
 			zap.String("product", product.Name),
 			zap.Int("docCount", len(docs)),
 		)

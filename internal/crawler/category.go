@@ -221,13 +221,40 @@ func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]
 		}
 	}
 
-	if len(products) > 0 {
+	if len(products) == 0 {
+		logger.Warn("产品线解析结果为空（未获取到型号列表）",
+			zap.String("lineId", lineID),
+			zap.String("linePid", linePid),
+			zap.String("requestUrl", apiURL),
+			zap.String("responseBody", string(body)),
+		)
+
+		// 容错兜底：若该产品线本身是独立单品/解决方案（华为未分配 sub-model 树，直接挂载版本与文档），将其自身收录为产品型号
+		if line, _ := c.repo.GetProductLineByID(lineID); line != nil && line.ProID != "" {
+			singleProd := store.Product{
+				ID:            line.ProID,
+				ProductLineID: line.ID,
+				Name:          line.Name,
+				NameURL:       line.NameURL,
+				NaviGroup:     "独立产品/解决方案",
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			}
+			products = append(products, singleProd)
+			c.repo.UpsertProducts(products)
+			logger.Info("产品线本身为独立单品/解决方案，已作为独立型号自动收录",
+				zap.String("lineName", line.Name),
+				zap.String("productId", line.ProID),
+			)
+		}
+	} else {
 		c.repo.UpsertProducts(products)
+		logger.Debug("产品线型号入库完成",
+			zap.String("lineName", resp.Data.ProductLineName),
+			zap.Int("productCount", len(products)),
+		)
 	}
-	logger.Info("产品线解析成功",
-		zap.String("lineName", resp.Data.ProductLineName),
-		zap.Int("productCount", len(products)),
-	)
+
 	return products, nil
 }
 
@@ -387,15 +414,20 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 
 			for task := range taskChan {
 				line := task.line
-				logger.Debug("分类同步协程开始解析产品线",
-					zap.Int("workerId", workerID),
-					zap.String("lineName", line.Name),
-					zap.String("lineId", line.ID),
-				)
-
 				prods, err := c.FetchProductsByLine(line.ID, line.ProID)
 				if err == nil {
 					atomic.AddInt64(&totalProducts, int64(len(prods)))
+					logger.Info(fmt.Sprintf("%s 产品线 [%s] 解析成功", workerTag, line.Name),
+						zap.Int("workerId", workerID),
+						zap.String("lineName", line.Name),
+						zap.Int("productCount", len(prods)),
+					)
+				} else {
+					logger.Warn(fmt.Sprintf("%s 产品线 [%s] 解析失败", workerTag, line.Name),
+						zap.Int("workerId", workerID),
+						zap.String("lineName", line.Name),
+						zap.Error(err),
+					)
 				}
 
 				done := atomic.AddInt64(&completedLines, 1)
