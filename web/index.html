@@ -558,7 +558,7 @@
                             class="mr-1 text-base flex-shrink-0"
                           ></i>
                           <a
-                            :href="'https://support.huawei.com/enterprise/zh/doc/' + doc.nid"
+                            :href="getDocUrl(doc)"
                             target="_blank"
                             rel="noopener noreferrer"
                             class="hover:text-red-600 hover:underline transition-colors inline-flex items-center group cursor-pointer"
@@ -2347,6 +2347,15 @@
             }
           };
 
+          const getDocUrl = (doc) => {
+            if (!doc || !doc.nid) return "#";
+            const t = (doc.docType || "").toUpperCase();
+            if (t === "HDX") {
+              return `https://support.huawei.com/hedex/hdx.do?docid=${encodeURIComponent(doc.nid)}&tocURL=resources/hedex-homepage.html`;
+            }
+            return `https://support.huawei.com/enterprise/zh/doc/${encodeURIComponent(doc.nid)}`;
+          };
+
           const getTaskStatusBadgeClass = (status) => {
             switch (status) {
               case 1:
@@ -2495,6 +2504,7 @@
             openLocalFolder,
             getDocTypeBadgeClass,
             getDocIcon,
+            getDocUrl,
             getTaskStatusBadgeClass,
             getTaskStatusStr,
             formatBytes,
