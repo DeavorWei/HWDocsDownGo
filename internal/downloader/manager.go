@@ -14,14 +14,16 @@ import (
 )
 
 type DownloadManager struct {
-	repo          *store.Repository
-	docCrawler    *crawler.DocCrawler
-	runners       map[string]*DownloadTaskRunner
-	taskQueue     chan string // taskId 队列
-	mu            sync.Mutex
-	listeners     []func(event ProgressEvent)
-	listenerMu    sync.RWMutex
-	stopChan      chan struct{}
+	repo       *store.Repository
+	docCrawler *crawler.DocCrawler
+	runners    map[string]*DownloadTaskRunner
+	queuedSet  map[string]bool
+	taskQueue  chan string // taskId 队列
+	mu         sync.Mutex
+	listeners  []func(event ProgressEvent)
+	listenerMu sync.RWMutex
+	stopChan   chan struct{}
+	stopOnce   sync.Once
 }
 
 func NewDownloadManager(repo *store.Repository, docCrawler *crawler.DocCrawler) *DownloadManager {
@@ -29,10 +31,11 @@ func NewDownloadManager(repo *store.Repository, docCrawler *crawler.DocCrawler) 
 		repo:       repo,
 		docCrawler: docCrawler,
 		runners:    make(map[string]*DownloadTaskRunner),
-		taskQueue:  make(chan string, 1000),
+		queuedSet:  make(map[string]bool),
+		taskQueue:  make(chan string, 2000),
 		stopChan:   make(chan struct{}),
 	}
-	go dm.workerLoop()
+	logger.SafeGo("download-worker-loop", dm.workerLoop)
 	return dm
 }
 
@@ -47,18 +50,23 @@ func (dm *DownloadManager) broadcast(event ProgressEvent) {
 	dm.listenerMu.RLock()
 	defer dm.listenerMu.RUnlock()
 	for _, l := range dm.listeners {
-		go l(event)
+		l(event)
 	}
 }
 
-// AddTask 添加文档下载任务
+// AddTask 添加文档下载任务 (排队去重与无锁通道投递)
 func (dm *DownloadManager) AddTask(doc *store.Document) (*store.DownloadTask, error) {
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
-
 	taskID := fmt.Sprintf("TASK-%s", doc.NID)
+
+	if dm.queuedSet[taskID] {
+		dm.mu.Unlock()
+		return dm.repo.GetDownloadTaskByID(taskID)
+	}
+
 	if runner, exists := dm.runners[taskID]; exists {
 		if runner.task.Status == int(StatusDownloading) || runner.task.Status == int(StatusQueued) {
+			dm.mu.Unlock()
 			return runner.task, nil
 		}
 	}
@@ -79,11 +87,24 @@ func (dm *DownloadManager) AddTask(doc *store.Document) (*store.DownloadTask, er
 	}
 
 	if err := dm.repo.CreateDownloadTask(task); err != nil {
+		dm.mu.Unlock()
 		logger.Error("保存下载任务记录失败", zap.String("taskId", taskID), zap.Error(err))
 		return nil, err
 	}
 
-	dm.taskQueue <- taskID
+	dm.queuedSet[taskID] = true
+	dm.mu.Unlock()
+
+	// 【关键修复】：通道发送移到互斥锁外，防止任务队列阻塞时锁住整个 DownloadManager
+	select {
+	case dm.taskQueue <- taskID:
+	default:
+		logger.Warn("下载队列已满，将在后台异步等待排队", zap.String("taskId", taskID))
+		logger.SafeGo("async-enqueue-"+taskID, func() {
+			dm.taskQueue <- taskID
+		})
+	}
+
 	logger.Info("添加下载任务到队列",
 		zap.String("taskId", taskID),
 		zap.String("docName", doc.Name),
@@ -98,7 +119,7 @@ func (dm *DownloadManager) BatchAddTasks(docs []store.Document) ([]*store.Downlo
 	var tasks []*store.DownloadTask
 	for _, d := range docs {
 		t, err := dm.AddTask(&d)
-		if err == nil {
+		if err == nil && t != nil {
 			tasks = append(tasks, t)
 		}
 	}
@@ -110,6 +131,7 @@ func (dm *DownloadManager) BatchAddTasks(docs []store.Document) ([]*store.Downlo
 func (dm *DownloadManager) PauseTask(taskID string) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
+	delete(dm.queuedSet, taskID)
 	if runner, exists := dm.runners[taskID]; exists {
 		runner.Cancel()
 		delete(dm.runners, taskID)
@@ -119,23 +141,30 @@ func (dm *DownloadManager) PauseTask(taskID string) {
 
 // ResumeTask 继续任务
 func (dm *DownloadManager) ResumeTask(taskID string) error {
-	dm.mu.Lock()
-	defer dm.mu.Unlock()
-
-	tasks, err := dm.repo.GetAllDownloadTasks()
+	task, err := dm.repo.GetDownloadTaskByID(taskID)
 	if err != nil {
-		logger.Error("恢复下载任务失败: 读取任务列表错误", zap.String("taskId", taskID), zap.Error(err))
+		logger.Error("恢复下载任务失败: 未找到任务", zap.String("taskId", taskID), zap.Error(err))
 		return err
 	}
-	for _, t := range tasks {
-		if t.ID == taskID {
-			t.Status = int(StatusQueued)
-			dm.repo.CreateDownloadTask(&t)
-			dm.taskQueue <- taskID
-			logger.Info("下载任务已恢复排队", zap.String("taskId", taskID))
-			break
-		}
+
+	dm.mu.Lock()
+	if dm.queuedSet[taskID] {
+		dm.mu.Unlock()
+		return nil
 	}
+	task.Status = int(StatusQueued)
+	dm.repo.CreateDownloadTask(task)
+	dm.queuedSet[taskID] = true
+	dm.mu.Unlock()
+
+	select {
+	case dm.taskQueue <- taskID:
+	default:
+		logger.SafeGo("async-enqueue-"+taskID, func() {
+			dm.taskQueue <- taskID
+		})
+	}
+	logger.Info("下载任务已恢复排队", zap.String("taskId", taskID))
 	return nil
 }
 
@@ -149,7 +178,7 @@ func (dm *DownloadManager) CancelTask(taskID string) {
 func (dm *DownloadManager) workerLoop() {
 	cfg := config.GetConfig()
 	maxWorkers := 3
-	if cfg != nil && cfg.MaxConcurrent > 0 {
+	if cfg.MaxConcurrent > 0 {
 		maxWorkers = cfg.MaxConcurrent
 	}
 	sem := make(chan struct{}, maxWorkers)
@@ -162,30 +191,22 @@ func (dm *DownloadManager) workerLoop() {
 			return
 		case taskID := <-dm.taskQueue:
 			sem <- struct{}{}
-			go func(tid string) {
+			logger.SafeGo("task-worker-"+taskID, func() {
 				defer func() { <-sem }()
-				dm.executeTask(tid)
-			}(taskID)
+				dm.executeTask(taskID)
+			})
 		}
 	}
 }
 
 func (dm *DownloadManager) executeTask(taskID string) {
 	logger.Debug("开始调度执行下载任务", zap.String("taskId", taskID))
-	tasks, err := dm.repo.GetAllDownloadTasks()
-	if err != nil {
-		logger.Error("获取任务失败", zap.String("taskId", taskID), zap.Error(err))
-		return
-	}
-	var task *store.DownloadTask
-	for i := range tasks {
-		if tasks[i].ID == taskID {
-			task = &tasks[i]
-			break
-		}
-	}
-	if task == nil {
+	task, err := dm.repo.GetDownloadTaskByID(taskID)
+	if err != nil || task == nil {
 		logger.Warn("任务未找到，跳过执行", zap.String("taskId", taskID))
+		dm.mu.Lock()
+		delete(dm.queuedSet, taskID)
+		dm.mu.Unlock()
 		return
 	}
 
@@ -197,11 +218,12 @@ func (dm *DownloadManager) executeTask(taskID string) {
 	})
 
 	dm.mu.Lock()
+	delete(dm.queuedSet, taskID)
 	dm.runners[taskID] = runner
 	dm.mu.Unlock()
 
 	startTime := time.Now()
-	runner.Run()
+	_ = runner.Run()
 	logger.Debug("下载任务执行结束", zap.String("taskId", taskID), zap.Duration("elapsed", time.Since(startTime)))
 
 	dm.mu.Lock()
@@ -211,6 +233,9 @@ func (dm *DownloadManager) executeTask(taskID string) {
 
 // StopAll 优雅终止所有正在运行的下载任务
 func (dm *DownloadManager) StopAll() {
+	dm.stopOnce.Do(func() {
+		close(dm.stopChan)
+	})
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 	for tid, runner := range dm.runners {
@@ -218,4 +243,5 @@ func (dm *DownloadManager) StopAll() {
 		logger.Info("退出系统: 已终止下载任务", zap.String("taskId", tid))
 	}
 	dm.runners = make(map[string]*DownloadTaskRunner)
+	dm.queuedSet = make(map[string]bool)
 }

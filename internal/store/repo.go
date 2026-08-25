@@ -291,23 +291,32 @@ func (r *Repository) UpdateDocDownloaded(nid string, isDownloaded int, localPath
 	}).Error
 }
 
-// BatchUpdateDocsDownloaded 批量更新文档已下载状态
+// BatchUpdateDocsDownloaded 批量更新文档已下载状态（事务批处理防锁库与提升写入性能）
 func (r *Repository) BatchUpdateDocsDownloaded(nidPathMap map[string]string) error {
-	for nid, path := range nidPathMap {
-		r.db.Model(&Document{}).Where("nid = ?", nid).Updates(map[string]interface{}{
-			"is_downloaded": 1,
-			"local_path":    path,
-			"updated_at":    time.Now(),
-		})
+	if len(nidPathMap) == 0 {
+		return nil
 	}
-	return nil
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		for nid, path := range nidPathMap {
+			if err := tx.Model(&Document{}).Where("nid = ?", nid).Updates(map[string]interface{}{
+				"is_downloaded": 1,
+				"local_path":    path,
+				"updated_at":    now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
-// ResetAllDocsDownloaded 重置所有文档的已下载状态为 0
+// ResetAllDocsDownloaded 重置所有文档的已下载状态为 0 (带 Where 条件规避 GORM v2 安全更新拦截)
 func (r *Repository) ResetAllDocsDownloaded() error {
-	return r.db.Model(&Document{}).Updates(map[string]interface{}{
+	return r.db.Model(&Document{}).Where("is_downloaded = ?", 1).Updates(map[string]interface{}{
 		"is_downloaded": 0,
 		"local_path":    "",
+		"updated_at":    time.Now(),
 	}).Error
 }
 
@@ -316,6 +325,16 @@ func (r *Repository) CreateDownloadTask(task *DownloadTask) error {
 	return r.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(task).Error
+}
+
+// GetDownloadTaskByID 根据 ID 精确获取单个下载任务 (主键索引查询)
+func (r *Repository) GetDownloadTaskByID(id string) (*DownloadTask, error) {
+	var task DownloadTask
+	err := r.db.Where("id = ?", id).First(&task).Error
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
 }
 
 // UpdateDownloadTaskProgress 更新下载任务进度

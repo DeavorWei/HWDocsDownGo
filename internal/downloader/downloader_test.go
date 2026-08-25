@@ -98,3 +98,29 @@ func TestMultiThreadDownload(t *testing.T) {
 		t.Errorf("Downloaded data does not match expected testData")
 	}
 }
+
+func TestSanitizeFileName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"normal_name.pdf", "normal_name.pdf"},
+		{"special*name?test.pdf", "special_name_test.pdf"},
+		{"../../../etc/passwd", "passwd"},
+		{"CON.txt", "_CON.txt"},
+		{"aux.pdf", "_aux.pdf"},
+		{"...", "doc_"}, // 会生成带时间戳的安全默认名，这里检查非空且不为点
+		{"   hello world.pdf   ", "hello world.pdf"},
+	}
+
+	for _, tt := range tests {
+		got := sanitizeFileName(tt.input)
+		if tt.input == "..." {
+			if strings.Contains(got, ".") && len(got) <= 3 {
+				t.Errorf("sanitizeFileName(%q) = %q, should be safe", tt.input, got)
+			}
+		} else if got != tt.expected {
+			t.Errorf("sanitizeFileName(%q) = %q, expected %q", tt.input, got, tt.expected)
+		}
+	}
+}

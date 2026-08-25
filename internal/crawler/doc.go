@@ -1,8 +1,10 @@
 package crawler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,6 +14,13 @@ import (
 
 	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/store"
+)
+
+var (
+	reDocTypeParen = regexp.MustCompile(`(?i)[\(（](hdx|chm|pdf|zip|多媒体)[\)）]`)
+	reDocTypeClean = regexp.MustCompile(`(?i)\s*[\(（](?:hdx|chm|pdf|zip|多媒体)[\)）]`)
+	reCleanMedia   = regexp.MustCompile(`(?i)\s*[\(（]多媒体[\)）]`)
+	reVersionTag   = regexp.MustCompile(`(?i)\s*V\d{3}R\d{3}(?:[,\s]*[CB]\d+)*(?:SP[HC]\d+)?`)
 )
 
 type DocCrawler struct {
@@ -35,9 +44,14 @@ type DocFileInfoResult struct {
 
 // FetchDocFileInfo 实时解析文档下载直链 (支持任意合法文档 NID)
 func (d *DocCrawler) FetchDocFileInfo(nid string) (*DocFileInfoResult, error) {
+	return d.FetchDocFileInfoWithContext(context.Background(), nid)
+}
+
+// FetchDocFileInfoWithContext 带有上下文取消支持的文档下载直链解析
+func (d *DocCrawler) FetchDocFileInfoWithContext(ctx context.Context, nid string) (*DocFileInfoResult, error) {
 	apiURL := fmt.Sprintf("https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/doc/file-info?nid=%s", nid)
 	referer := "https://support.huawei.com/enterprise/zh/index.html"
-	body, err := d.client.DoRequest("GET", apiURL, nil, referer)
+	body, err := d.client.DoRequest(ctx, "GET", apiURL, nil, referer)
 	if err != nil {
 		logger.Error("请求文档下载直链失败", zap.String("nid", nid), zap.Error(err))
 		return nil, fmt.Errorf("请求文档下载信息失败 (nid: %s): %w", nid, err)
@@ -85,10 +99,8 @@ func (d *DocCrawler) FetchDocFileInfo(nid string) (*DocFileInfoResult, error) {
 	}, nil
 }
 
-// ParseDocType 根据文档标题及附加字段自动识别文档格式 (支持 HDX / CHM / PDF / ZIP / 多媒体 / OTHER)
+// ParseDocType 根据文档标题及附加字段自动识别文档格式 (精准正则与后缀判定，避免型号误伤)
 func ParseDocType(name string, fv map[string]interface{}) string {
-	lower := strings.ToLower(name)
-
 	// 1. 优先判定多媒体格式
 	if strings.Contains(name, "多媒体") || strings.Contains(name, "视频") {
 		return "多媒体"
@@ -102,19 +114,19 @@ func ParseDocType(name string, fv map[string]interface{}) string {
 		}
 	}
 
-	// 2. 判定标准文档包格式
-	if strings.Contains(lower, "(hdx)") || strings.Contains(lower, "hdx") {
-		return "HDX"
+	// 2. 从标题括号中精准提取格式标记，例如 (hdx), (pdf), (chm), (zip)
+	matches := reDocTypeParen.FindStringSubmatch(name)
+	if len(matches) > 1 {
+		return strings.ToUpper(matches[1])
 	}
-	if strings.Contains(lower, "(chm)") || strings.Contains(lower, "chm") {
-		return "CHM"
+
+	// 3. 检查文件名自然扩展名
+	ext := strings.ToUpper(strings.TrimPrefix(filepath.Ext(name), "."))
+	switch ext {
+	case "HDX", "CHM", "PDF", "ZIP":
+		return ext
 	}
-	if strings.Contains(lower, "(pdf)") || strings.Contains(lower, "pdf") {
-		return "PDF"
-	}
-	if strings.Contains(lower, "(zip)") || strings.Contains(lower, "zip") {
-		return "ZIP"
-	}
+
 	return "OTHER"
 }
 
@@ -154,18 +166,16 @@ func FormatBytes(b int64) string {
 	return fmt.Sprintf("%.2f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-// ParseSizeStringToBytes 将如 "715,836.18" (KB) 或 "166558042" (Bytes) 字符串转为 int64
+// ParseSizeStringToBytes 将华为接口返回的 KB 字符串转为 int64 字节数 (消除 10MB 魔法数字)
 func ParseSizeStringToBytes(sizeStr string) int64 {
 	clean := strings.ReplaceAll(sizeStr, ",", "")
 	clean = strings.TrimSpace(clean)
 	if clean == "" {
 		return 0
 	}
-	if f, err := strconv.ParseFloat(clean, 64); err == nil {
-		if f > 10000000 {
-			return int64(f)
-		}
-		return int64(f * 1024)
+	if f, err := strconv.ParseFloat(clean, 64); err == nil && f > 0 {
+		// 华为 API 中的 fileSize 统一以 KB 为单位
+		return int64(f * 1024.0)
 	}
 	return 0
 }
@@ -257,12 +267,11 @@ func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, p
 // BaseDocGroupKey 计算文档同属系列/手册的基准 Key，用于识别跨版本的同一份文档
 func BaseDocGroupKey(name, docType string) string {
 	// 去除格式标记 (如 (hdx), (chm), (pdf), (多媒体), （多媒体）)
-	clean := regexp.MustCompile(`(?i)\s*[\(（](?:hdx|chm|pdf|zip|多媒体)[\)）]`).ReplaceAllString(name, "")
-	clean = regexp.MustCompile(`(?i)\s*[\(（]多媒体[\)）]`).ReplaceAllString(clean, "")
+	clean := reDocTypeClean.ReplaceAllString(name, "")
+	clean = reCleanMedia.ReplaceAllString(clean, "")
 
 	// 去除 V/R/C/B 版本号部分 (如 V300R025C00, V300R024C10, C11, V200R005SPH019 等)
-	vPattern := regexp.MustCompile(`(?i)\s*V\d{3}R\d{3}(?:[,\s]*[CB]\d+)*(?:SP[HC]\d+)?`)
-	clean = vPattern.ReplaceAllString(clean, "")
+	clean = reVersionTag.ReplaceAllString(clean, "")
 
 	// 去除多余空格
 	clean = strings.Join(strings.Fields(clean), " ")
@@ -303,17 +312,25 @@ func MarkNewVersions(docs []store.Document) {
 		}
 
 		for _, d := range groupDocs {
+			// 【关键修复】：必须同时满足日期与时间一致，避免同一天发布的多个补丁全部打标为最新
 			if latestDate != "" && d.PublishDate == latestDate {
-				d.IsNewVersion = true
-			} else {
-				d.IsNewVersion = false
+				if latestTime == "" || d.PublishTime == latestTime {
+					d.IsNewVersion = true
+					continue
+				}
 			}
+			d.IsNewVersion = false
 		}
 	}
 }
 
-// FetchDocsByProduct 从在线 API 抓取产品文档并递归解析嵌套树
+// FetchDocsByProduct 从在线 API 抓取产品文档并递归解析嵌套树 (兼容无 Context 调用)
 func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName string) ([]store.Document, error) {
+	return d.FetchDocsByProductWithContext(context.Background(), product, lineName, catName)
+}
+
+// FetchDocsByProductWithContext 带有上下文取消支持的产品文档抓取
+func (d *DocCrawler) FetchDocsByProductWithContext(ctx context.Context, product store.Product, lineName, catName string) ([]store.Document, error) {
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/product-pid-%s", product.ID)
 
 	// 精确对齐真实请求体参数：isAsc 必须为 0, orderBy 必须为 "name"
@@ -331,11 +348,11 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 
 	// 1. 请求 second-item 核心文档树接口
 	apiURL := "https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/doc/second-item"
-	respBytes, err := d.client.DoRequest("POST", apiURL, bodyBytes, referer)
+	respBytes, err := d.client.DoRequest(ctx, "POST", apiURL, bodyBytes, referer)
 	if err != nil {
 		// 若 second-item 失败，再尝试 eos 接口
 		apiURL2 := "https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/doc/eos"
-		respBytes, err = d.client.DoRequest("POST", apiURL2, bodyBytes, referer)
+		respBytes, err = d.client.DoRequest(ctx, "POST", apiURL2, bodyBytes, referer)
 		if err != nil {
 			logger.Warn("获取产品文档列表失败",
 				zap.String("product", product.Name),

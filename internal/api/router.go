@@ -2,11 +2,24 @@ package api
 
 import (
 	"io/fs"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+// isLocalOrigin 判断是否为合法的本地源
+func isLocalOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	return strings.HasPrefix(origin, "http://localhost") ||
+		strings.HasPrefix(origin, "http://127.0.0.1") ||
+		strings.HasPrefix(origin, "https://localhost") ||
+		strings.HasPrefix(origin, "https://127.0.0.1")
+}
 
 // SetupRouter 配置 Gin HTTP 路由
 func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
@@ -14,9 +27,13 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	// CORS 中间件
+	// 【安全加固】：CORS 中间件收紧至仅允许本地客户端
 	r.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+		if isLocalOrigin(origin) {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 		if c.Request.Method == "OPTIONS" {
@@ -51,7 +68,6 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 		apiGroup.GET("/statistics", h.GetStatistics)
 		apiGroup.GET("/settings", h.GetSettings)
 		apiGroup.POST("/settings", h.UpdateSettings)
-		apiGroup.POST("/open-folder", h.OpenFolder)
 		apiGroup.POST("/system/shutdown", h.Shutdown)
 	}
 
@@ -65,7 +81,11 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 			path := strings.TrimPrefix(c.Request.URL.Path, "/")
 			if path != "" && path != "index.html" {
 				if data, err := fs.ReadFile(staticFS, path); err == nil {
-					c.Data(http.StatusOK, "text/plain; charset=utf-8", data)
+					mimeType := mime.TypeByExtension(filepath.Ext(path))
+					if mimeType == "" {
+						mimeType = "application/octet-stream"
+					}
+					c.Data(http.StatusOK, mimeType, data)
 					return
 				}
 			}

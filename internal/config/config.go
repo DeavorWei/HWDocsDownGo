@@ -30,7 +30,7 @@ var (
 )
 
 // InitConfig 初始化全局配置
-func InitConfig(repo *store.Repository) *Config {
+func InitConfig(repo *store.Repository) Config {
 	configLock.Lock()
 	defer configLock.Unlock()
 
@@ -54,7 +54,7 @@ func InitConfig(repo *store.Repository) *Config {
 
 	cfg := &Config{
 		Port:               8088,
-		DownloadDir:        repo.GetSetting("download_dir", defaultDownloadDir),
+		DownloadDir:        defaultDownloadDir, // 锁死为固定默认目录，禁止任意修改
 		MaxConcurrent:      getIntSetting(repo, "max_concurrent", 3),
 		FileThreads:        getIntSetting(repo, "file_threads", 1),
 		CrawlerThreads:     getIntSetting(repo, "crawler_threads", 1),
@@ -66,7 +66,7 @@ func InitConfig(repo *store.Repository) *Config {
 	}
 
 	GlobalConfig = cfg
-	return cfg
+	return *cfg
 }
 
 func getIntSetting(repo *store.Repository, key string, defaultVal int) int {
@@ -88,21 +88,25 @@ func getBoolSetting(repo *store.Repository, key string, defaultVal bool) bool {
 	return str == "1" || str == "true"
 }
 
-func GetConfig() *Config {
+// GetConfig 获取当前系统配置的快照副本 (值拷贝，杜绝多协程并发读写 Data Race)
+func GetConfig() Config {
 	configLock.RLock()
-	configLock.RUnlock()
-	return GlobalConfig
+	defer configLock.RUnlock()
+	if GlobalConfig == nil {
+		return Config{}
+	}
+	return *GlobalConfig
 }
 
-func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string, fileThreads, crawlerThreads int) {
+// UpdateConfig 更新系统运行时配置 (下载目录已锁死，不开放修改)
+func UpdateConfig(repo *store.Repository, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string, fileThreads, crawlerThreads int) {
 	configLock.Lock()
 	defer configLock.Unlock()
 
-	if downloadDir != "" {
-		GlobalConfig.DownloadDir = downloadDir
-		repo.SetSetting("download_dir", downloadDir)
-		os.MkdirAll(downloadDir, 0755)
+	if GlobalConfig == nil {
+		return
 	}
+
 	if maxConcurrent > 0 {
 		GlobalConfig.MaxConcurrent = maxConcurrent
 		repo.SetSetting("max_concurrent", strconv.Itoa(maxConcurrent))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -84,14 +85,17 @@ func main() {
 	localScanner := scanner.NewLocalScanner(repo)
 
 	// 5. 初始化 HTTP 服务与嵌入式 Web UI
-	handler := api.NewServerHandler(repo, catCrawler, docCrawler, crawlerEngine, downManager, localScanner)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+
+	handler := api.NewServerHandler(repo, catCrawler, docCrawler, crawlerEngine, downManager, localScanner, quit)
 	staticFS := web.GetStaticFS()
 	router := api.SetupRouter(handler, staticFS)
 
 	// 6. 自动在后台同步产品大类、二级产品线与产品型号 (首次启动或设置开关开启时)
 	cats, _ := repo.GetAllCategories()
 	if cfg.AutoSyncCategories || len(cats) == 0 {
-		go func() {
+		logger.SafeGo("auto-sync-categories", func() {
 			time.Sleep(500 * time.Millisecond)
 			logger.Info("正在后台自动同步产品大类、二级产品线与型号数据...")
 			_ = catCrawler.SyncAllCategoriesAndProducts(func(st crawler.CategorySyncStatus) {
@@ -99,16 +103,16 @@ func main() {
 			}, func(st crawler.CategorySyncStatus) {
 				handler.BroadcastCategorySyncFinished(st)
 			})
-		}()
+		})
 	}
 
 	// 7. 自动扫描本地下载目录并打标已下载文档
 	if cfg.DownloadDir != "" {
-		go func() {
+		logger.SafeGo("auto-scan-download-dir", func() {
 			time.Sleep(1 * time.Second)
 			logger.Info("自动扫描本地下载目录", zap.String("downloadDir", cfg.DownloadDir))
 			localScanner.ScanDirectory(cfg.DownloadDir)
-		}()
+		})
 	}
 
 	serverAddr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
@@ -117,30 +121,51 @@ func main() {
 		Handler: router,
 	}
 
-	// 7. 异步启动 Web 服务
-	go func() {
+	// 8. 异步启动 Web 服务
+	logger.SafeGo("http-server-serve", func() {
 		logger.Info("Web GUI 管理服务已启动", zap.String("url", "http://"+serverAddr))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("HTTP 服务启动失败", zap.Error(err))
 			os.Exit(1)
 		}
-	}()
+	})
 
-	// 8. 自动在 Windows 默认浏览器打开
+	// 9. 自动在 Windows 默认浏览器打开
 	if !*noBrowser {
-		go func() {
+		logger.SafeGo("open-browser", func() {
 			time.Sleep(800 * time.Millisecond)
 			openBrowser(fmt.Sprintf("http://%s", serverAddr))
-		}()
+		})
 	}
 
-	// 9. 优雅退出信号监听
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// 10. 统一优雅退出信号监听与资源释放
 	<-quit
 
-	logger.Info("正在关闭服务...")
-	logger.Info("华为产品文档下载管理器已安全退出。")
+	logger.Info("📢 收到停机指令，正在优雅关闭服务...")
+
+	// 10.1 停止接收新 HTTP 请求并关闭现有连接 (5s 超时)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Warn("HTTP 服务关闭超时", zap.Error(err))
+	}
+
+	// 10.2 停止爬虫任务
+	crawlerEngine.Stop()
+
+	// 10.3 终止所有下载任务并落盘
+	downManager.StopAll()
+
+	// 10.4 关闭 SQLite 连接
+	if sqlDB, err := db.DB(); err == nil {
+		_ = sqlDB.Close()
+		logger.Info("SQLite 数据库连接已安全关闭")
+	}
+
+	logger.Info("==========================================================")
+	logger.Info("     华为产品文档下载管理器 - HWDocsDownGo 已安全退出     ")
+	logger.Info("==========================================================")
+	_ = logger.Sync()
 }
 
 func openBrowser(url string) {

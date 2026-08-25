@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -50,54 +51,31 @@ func IsWsfCheckError(err error) bool {
 	return strings.Contains(errMsg, "wsf check error") || strings.Contains(errMsg, "support-productservice-010001")
 }
 
-// DoRequest 发起带有完整现代 Chrome 浏览器特性的 HTTP 请求
-func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer string) ([]byte, error) {
+// DoRequest 发起带有完整现代 Chrome 浏览器特性的 HTTP 请求 (支持 Context 取消与重试自愈)
+func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body []byte, referer string) ([]byte, error) {
 	cfg := config.GetConfig()
-	if cfg != nil && cfg.RequestDelayMs > 0 {
-		logger.Debug("执行爬虫请求间隔延迟", zap.Int("delayMs", cfg.RequestDelayMs))
-		time.Sleep(time.Duration(cfg.RequestDelayMs) * time.Millisecond)
+	if cfg.RequestDelayMs > 0 {
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(cfg.RequestDelayMs) * time.Millisecond):
+			}
+		} else {
+			time.Sleep(time.Duration(cfg.RequestDelayMs) * time.Millisecond)
+		}
 	}
 
-	var reqBody io.Reader
-	if len(body) > 0 {
-		reqBody = bytes.NewReader(body)
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	req, err := http.NewRequest(method, urlStr, reqBody)
-	if err != nil {
-		logger.Error("创建 HTTP 请求失败", zap.String("method", method), zap.String("url", urlStr), zap.Error(err))
-		return nil, fmt.Errorf("创建请求失败: %w", err)
-	}
-
-	// 完整对齐现代 Chrome 浏览器标头规范
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-HK;q=0.6,ja;q=0.5")
-	req.Header.Set("sec-ch-ua", `"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"`)
-	req.Header.Set("sec-ch-ua-mobile", "?0")
-	req.Header.Set("sec-ch-ua-platform", `"Windows"`)
-	req.Header.Set("sec-fetch-dest", "empty")
-	req.Header.Set("sec-fetch-mode", "cors")
-	req.Header.Set("sec-fetch-site", "same-origin")
-
-	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Origin", "https://support.huawei.com")
-	}
-	if referer != "" {
-		req.Header.Set("Referer", referer)
-	} else {
-		req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
-	}
-
-	// Cookie 组装策略：基础 Cookie + 用户自定义 Cookie
+	// 组装 Header 与 Cookie
 	cookieStr := "supportelang=zh; lang=zh; support_last_vist=enterprise; browsehappy=browsehappy"
-	if cfg != nil && strings.TrimSpace(cfg.CustomCookie) != "" {
+	if strings.TrimSpace(cfg.CustomCookie) != "" {
 		cookieStr = cookieStr + "; " + strings.TrimSpace(cfg.CustomCookie)
 	}
-	req.Header.Set("Cookie", cookieStr)
 
-	// 打印请求携带的 Cookies
 	c.reqMu.Lock()
 	if c.isFirstReq {
 		logger.Info("🌐 [首次网络请求] 发起 HTTP 请求",
@@ -118,6 +96,44 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 	// 重试机制（最多 3 次）
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		// 【关键修复】：每次重试必须根据源 body 切片重新创建 Reader，避免 POST 重试时 Body 耗尽
+		var reqBody io.Reader
+		if len(body) > 0 {
+			reqBody = bytes.NewReader(body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, urlStr, reqBody)
+		if err != nil {
+			logger.Error("创建 HTTP 请求失败", zap.String("method", method), zap.String("url", urlStr), zap.Error(err))
+			return nil, fmt.Errorf("创建请求失败: %w", err)
+		}
+
+		// 完整对齐现代 Chrome 浏览器标头规范
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "application/json, text/plain, */*")
+		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-HK;q=0.6,ja;q=0.5")
+		req.Header.Set("sec-ch-ua", `"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"`)
+		req.Header.Set("sec-ch-ua-mobile", "?0")
+		req.Header.Set("sec-ch-ua-platform", `"Windows"`)
+		req.Header.Set("sec-fetch-dest", "empty")
+		req.Header.Set("sec-fetch-mode", "cors")
+		req.Header.Set("sec-fetch-site", "same-origin")
+
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Origin", "https://support.huawei.com")
+		}
+		if referer != "" {
+			req.Header.Set("Referer", referer)
+		} else {
+			req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+		}
+		req.Header.Set("Cookie", cookieStr)
+
 		startTime := time.Now()
 		resp, err := c.client.Do(req)
 		latency := time.Since(startTime)
@@ -130,7 +146,11 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 				zap.Duration("latency", latency),
 				zap.Error(err),
 			)
-			time.Sleep(time.Duration(attempt*500) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt*500) * time.Millisecond):
+			}
 			continue
 		}
 
@@ -189,7 +209,11 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 		)
 
 		lastErr = fmt.Errorf("HTTP 状态码错误: %d, 返回内容: %s", resp.StatusCode, truncate(respBodyStr, 100))
-		time.Sleep(time.Duration(attempt*500) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt*500) * time.Millisecond):
+		}
 	}
 
 	logger.Error("HTTP 请求重试 3 次后仍失败", zap.String("url", urlStr), zap.Error(lastErr))

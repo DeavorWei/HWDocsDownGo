@@ -756,15 +756,9 @@
                 <div class="flex items-center space-x-2 text-xs">
                   <span class="text-slate-500">下载保存目录:</span>
                   <code
-                    class="bg-slate-100 text-slate-700 px-2 py-1 rounded font-mono"
+                    class="bg-slate-100 text-slate-700 px-2 py-1 rounded font-mono select-all"
                     >{{ config.downloadDir }}</code
                   >
-                  <button
-                    @click="openLocalFolder(config.downloadDir)"
-                    class="text-blue-600 hover:underline"
-                  >
-                    打开目录
-                  </button>
                 </div>
               </div>
 
@@ -1265,15 +1259,15 @@
                 <div>
                   <label
                     class="block text-xs font-semibold text-slate-700 mb-1.5"
-                    >文档下载保存根目录</label
+                    >文档下载保存根目录 (系统已锁定)</label
                   >
-                  <input
-                    type="text"
-                    v-model="configForm.downloadDir"
-                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
+                  <div
+                    class="w-full bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-600 font-mono select-all"
+                  >
+                    {{ config.downloadDir || 'HWDDGoData/Downloads' }}
+                  </div>
                   <p class="text-xs text-slate-400 mt-1">
-                    下载的文件将存放在该目录，支持绝对路径（如 D:\HuaweiDocs）
+                    🔒 下载目录已固定为 HWDDGoData/Downloads，系统不开放自定义路径以保障运行安全。
                   </p>
                 </div>
 
@@ -2305,17 +2299,9 @@
             }
           };
 
-          const openLocalFolder = async (path) => {
+          const openLocalFolder = (path) => {
             if (!path) return;
-            try {
-              await fetch("/api/open-folder", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ path }),
-              });
-            } catch (e) {
-              console.error(e);
-            }
+            showToast("下载目录位置: " + path, "info");
           };
 
           const fetchStats = async () => {

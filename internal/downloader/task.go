@@ -56,6 +56,16 @@ func (r *DownloadTaskRunner) Cancel() {
 	r.cancel()
 }
 
+var probeClient = &http.Client{
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+		MaxIdleConns:        50,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     30 * time.Second,
+	},
+}
+
 func (r *DownloadTaskRunner) Run() error {
 	r.task.Status = int(StatusDownloading)
 	r.notifyProgress(0)
@@ -78,7 +88,9 @@ func (r *DownloadTaskRunner) Run() error {
 		fileName = fileName + "." + fileInfo.Type
 	}
 
-	finalPath := filepath.Join(r.downloadDir, fileName)
+	// 【关键修复】：保存路径使用 [NID]文件名 隔离，杜绝不同产品同名手册覆写删除先前文件
+	uniqueName := fmt.Sprintf("[%s]%s", r.task.DocNID, fileName)
+	finalPath := filepath.Join(r.downloadDir, uniqueName)
 	tempPath := finalPath + ".tmp"
 	r.task.FileName = fileName
 	r.task.SavePath = finalPath
@@ -87,7 +99,7 @@ func (r *DownloadTaskRunner) Run() error {
 	// 2. 检查配置中的线程数 (1-32，默认 1)
 	cfg := config.GetConfig()
 	fileThreads := 1
-	if cfg != nil && cfg.FileThreads > 1 {
+	if cfg.FileThreads > 1 {
 		fileThreads = cfg.FileThreads
 	}
 	if fileThreads > 32 {
@@ -111,7 +123,7 @@ func (r *DownloadTaskRunner) Run() error {
 	return r.downloadSingleThread(downloadURL, tempPath, finalPath)
 }
 
-// probeRangeSupport 探测目标服务器是否支持 Range 分片及获取文件真实总大小
+// probeRangeSupport 探测目标服务器是否支持 Range 分片及获取文件真实总大小 (复用连接池)
 func (r *DownloadTaskRunner) probeRangeSupport(downloadURL string) (int64, bool) {
 	req, err := http.NewRequestWithContext(r.ctx, "GET", downloadURL, nil)
 	if err != nil {
@@ -121,14 +133,7 @@ func (r *DownloadTaskRunner) probeRangeSupport(downloadURL string) (int64, bool)
 	req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
 	req.Header.Set("Range", "bytes=0-0")
 
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
-	resp, err := client.Do(req)
+	resp, err := probeClient.Do(req)
 	if err != nil {
 		return 0, false
 	}
@@ -359,11 +364,16 @@ func (r *DownloadTaskRunner) downloadMultiThread(downloadURL, tempPath, finalPat
 	return nil
 }
 
-// downloadSingleThread 单流标准下载（支持断点续传）
+// downloadSingleThread 单流标准下载（支持断点续传与完整性断言）
 func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPath string) error {
 	var existingBytes int64
 	if fi, err := os.Stat(tempPath); err == nil {
 		existingBytes = fi.Size()
+		// 若此前为预分配截断文件或残存破损文件，重置为 0
+		if r.task.TotalBytes > 0 && existingBytes >= r.task.TotalBytes {
+			existingBytes = 0
+			_ = os.Remove(tempPath)
+		}
 	}
 
 	req, err := http.NewRequestWithContext(r.ctx, "GET", downloadURL, nil)
@@ -381,7 +391,9 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 	client := &http.Client{
 		Timeout: 0,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       60 * time.Second,
 		},
 	}
 
@@ -469,6 +481,13 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 
 	file.Close()
 
+	// 【关键修复】：退出读取循环后强制断言长度一致性，提前 EOF 判定为下载失败
+	if r.task.TotalBytes > 0 && downloadedSoFar != r.task.TotalBytes {
+		errMsg := fmt.Sprintf("文件下载不完整: 预期 %d 字节, 实际获得 %d 字节", r.task.TotalBytes, downloadedSoFar)
+		r.fail(errMsg)
+		return fmt.Errorf("%s", errMsg)
+	}
+
 	// 重命名为正式文件
 	os.Remove(finalPath)
 	if err := os.Rename(tempPath, finalPath); err != nil {
@@ -539,12 +558,33 @@ func (r *DownloadTaskRunner) pause() {
 	r.notifyProgress(0)
 }
 
+// sanitizeFileName 安全清洗文件名 (先截取文件名 Base 消除路径穿越，再过滤非法字符及 Windows 系统保留设备名)
 func sanitizeFileName(name string) string {
-	invalid := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
+	// 1. 先截取纯文件名，彻底消除 ../ 和绝对路径穿越
+	name = filepath.Base(filepath.Clean(name))
+
+	// 2. 替换文件名中的非法字符
+	invalid := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|", "\r", "\n", "\t"}
 	result := name
 	for _, char := range invalid {
 		result = strings.ReplaceAll(result, char, "_")
 	}
-	return strings.TrimSpace(result)
+	result = strings.TrimSpace(result)
+	result = strings.Trim(result, ".")
+
+	if result == "" || result == "." || result == ".." {
+		result = fmt.Sprintf("doc_%d", time.Now().Unix())
+	}
+
+	// 3. 过滤 Windows 系统保留设备名
+	upper := strings.ToUpper(result)
+	reserved := []string{"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
+	for _, res := range reserved {
+		if upper == res || strings.HasPrefix(upper, res+".") {
+			result = "_" + result
+			break
+		}
+	}
+	return result
 }
 

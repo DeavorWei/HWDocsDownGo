@@ -1,6 +1,7 @@
 package crawler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -55,7 +56,7 @@ func (c *CategoryCrawler) setSyncStatus(st CategorySyncStatus) {
 // FetchCategories 抓取全部分类和产品线
 func (c *CategoryCrawler) FetchCategories() ([]store.Category, error) {
 	apiURL := "https://support.huawei.com/supportgateway/mysupport/v1/enterprise/index/product/category"
-	body, err := c.client.DoRequest("GET", apiURL, nil, "https://support.huawei.com/enterprise/zh/index.html")
+	body, err := c.client.DoRequest(context.Background(), "GET", apiURL, nil, "https://support.huawei.com/enterprise/zh/index.html")
 	if err != nil {
 		logger.Error("抓取产品分类失败", zap.String("url", apiURL), zap.Error(err))
 		return nil, fmt.Errorf("抓取产品分类失败: %w", err)
@@ -100,13 +101,14 @@ func (c *CategoryCrawler) FetchCategories() ([]store.Category, error) {
 				lineID = fmt.Sprintf("%s-%s", catID, sub.Name)
 			}
 			line := store.ProductLine{
-				ID:         lineID,
-				CategoryID: catID,
-				Name:       sub.Name,
-				NameURL:    sub.URL,
-				ProID:      pid,
-				CreatedAt:  now,
-				UpdatedAt:  now,
+				ID:           lineID,
+				CategoryID:   catID,
+				CategoryName: catItem.Name, // 冗余记录大类名称
+				Name:         sub.Name,
+				NameURL:      sub.URL,
+				ProID:        pid,
+				CreatedAt:    now,
+				UpdatedAt:    now,
 			}
 			productLines = append(productLines, line)
 		}
@@ -133,7 +135,7 @@ func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]
 	}
 	apiURL := fmt.Sprintf("https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/sub-model?selfPbiId=%s&submodel=doc", linePid)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/category/switches-pid-%s?submodel=doc", linePid)
-	body, err := c.client.DoRequest("GET", apiURL, nil, referer)
+	body, err := c.client.DoRequest(context.Background(), "GET", apiURL, nil, referer)
 	if err != nil {
 		logger.Warn("抓取产品线型号树失败", zap.String("lineId", lineID), zap.String("url", apiURL), zap.Error(err))
 		return nil, fmt.Errorf("抓取产品型号树失败: %w", err)
@@ -263,7 +265,7 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 	logger.Debug("开始抓取产品型号的细分子型号与版本", zap.String("productId", productID))
 	apiURL := fmt.Sprintf("https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/sub-model-and-version/pc?subModelOfferingId=&pbiId=%s", productID)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/product-pid-%s", productID)
-	body, err := c.client.DoRequest("GET", apiURL, nil, referer)
+	body, err := c.client.DoRequest(context.Background(), "GET", apiURL, nil, referer)
 	if err != nil {
 		logger.Warn("抓取子型号与版本网络失败", zap.String("productId", productID), zap.Error(err))
 		return nil, nil, fmt.Errorf("抓取子型号与版本失败: %w", err)
@@ -310,8 +312,9 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 	for _, v := range resp.Data.VersionR {
 		if v.ID != "" && v.Name != "" {
 			versions = append(versions, store.Version{
-				ID:        v.ID,
+				ID:        fmt.Sprintf("%s_%s", productID, v.ID), // 联合主键隔离，防止跨产品同名版本相互覆盖
 				ProductID: productID,
+				RawID:     v.ID,
 				Name:      v.Name,
 				CreatedAt: now,
 				UpdatedAt: now,
@@ -375,7 +378,7 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 
 	cfg := config.GetConfig()
 	numWorkers := 1
-	if cfg != nil && cfg.CrawlerThreads > 0 {
+	if cfg.CrawlerThreads > 0 {
 		numWorkers = cfg.CrawlerThreads
 	}
 	if numWorkers > 32 {

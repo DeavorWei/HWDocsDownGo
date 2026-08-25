@@ -3,9 +3,6 @@ package api
 import (
 	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,8 +25,8 @@ type ServerHandler struct {
 	downManager   *downloader.DownloadManager
 	localScanner  *scanner.LocalScanner
 	wsUpgrader    websocket.Upgrader
-	wsClients     map[*websocket.Conn]bool
-	wsMu          sync.Mutex
+	hub           *WSHub
+	quitChan      chan os.Signal
 }
 
 func NewServerHandler(
@@ -39,7 +36,9 @@ func NewServerHandler(
 	crawlerEngine *crawler.CrawlerEngine,
 	downManager *downloader.DownloadManager,
 	localScanner *scanner.LocalScanner,
+	quitChan chan os.Signal,
 ) *ServerHandler {
+	hub := NewWSHub()
 	h := &ServerHandler{
 		repo:          repo,
 		catCrawler:    catCrawler,
@@ -47,15 +46,19 @@ func NewServerHandler(
 		crawlerEngine: crawlerEngine,
 		downManager:   downManager,
 		localScanner:  localScanner,
+		hub:           hub,
+		quitChan:      quitChan,
 		wsUpgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
+			CheckOrigin: func(r *http.Request) bool {
+				origin := r.Header.Get("Origin")
+				return isLocalOrigin(origin)
+			},
 		},
-		wsClients: make(map[*websocket.Conn]bool),
 	}
 
 	// 监听下载管理器的进度并推送到 WebSocket
 	downManager.Subscribe(func(event downloader.ProgressEvent) {
-		h.broadcastWS(map[string]interface{}{
+		h.hub.Broadcast(map[string]interface{}{
 			"type": "DOWNLOAD_PROGRESS",
 			"data": event,
 		})
@@ -64,12 +67,23 @@ func NewServerHandler(
 	// 监听爬虫结束事件并广播
 	crawlerEngine.SetOnFinished(func(success bool, msg string) {
 		logger.Info("爬虫引擎任务完成", zap.Bool("success", success), zap.String("msg", msg))
-		h.broadcastWS(map[string]interface{}{
+		h.hub.Broadcast(map[string]interface{}{
 			"type": "CRAWLER_FINISHED",
 			"data": gin.H{
 				"isBusy":  false,
 				"success": success,
 				"msg":     msg,
+			},
+		})
+	})
+
+	// 订阅实时日志并推送到 WebSocket
+	logger.SubscribeLog(func(level string, msg string) {
+		h.hub.Broadcast(map[string]interface{}{
+			"type": "SYSTEM_LOG",
+			"data": gin.H{
+				"level": level,
+				"msg":   msg,
 			},
 		})
 	})
@@ -273,14 +287,14 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 	)
 
 	onLog := func(msg string) {
-		h.broadcastWS(map[string]interface{}{
+		h.hub.Broadcast(map[string]interface{}{
 			"type": "CRAWLER_LOG",
 			"data": msg,
 		})
 	}
 
 	onProgress := func(cur, tot int, item string) {
-		h.broadcastWS(map[string]interface{}{
+		h.hub.Broadcast(map[string]interface{}{
 			"type": "CRAWLER_PROGRESS",
 			"data": gin.H{
 				"current": cur,
@@ -354,26 +368,25 @@ func (h *ServerHandler) StartCategorySync(c *gin.Context) {
 		return
 	}
 	logger.Info("API 接收到手动触发产品分类树同步请求")
-	go func() {
+	logger.SafeGo("manual-category-sync", func() {
 		h.catCrawler.SyncAllCategoriesAndProducts(func(st crawler.CategorySyncStatus) {
-			h.broadcastWS(map[string]interface{}{
+			h.hub.Broadcast(map[string]interface{}{
 				"type": "CATEGORY_SYNC_PROGRESS",
 				"data": st,
 			})
 		}, func(st crawler.CategorySyncStatus) {
-			h.broadcastWS(map[string]interface{}{
+			h.hub.Broadcast(map[string]interface{}{
 				"type": "CATEGORY_SYNC_FINISHED",
 				"data": st,
 			})
 		})
-	}()
+	})
 	success(c, "已启动产品分类树同步")
 }
 
-// UpdateSettings 更新配置
+// UpdateSettings 更新配置 (下载目录已锁死，前端传参将被忽略)
 func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 	var req struct {
-		DownloadDir        string `json:"downloadDir"`
 		MaxConcurrent      int    `json:"maxConcurrent"`
 		FileThreads        int    `json:"fileThreads"`
 		CrawlerThreads     int    `json:"crawlerThreads"`
@@ -388,114 +401,75 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 	logger.Info("API 保存系统配置",
-		zap.String("downloadDir", req.DownloadDir),
 		zap.Int("maxConcurrent", req.MaxConcurrent),
 		zap.Int("fileThreads", req.FileThreads),
 		zap.Int("crawlerThreads", req.CrawlerThreads),
 		zap.String("logLevel", req.LogLevel),
 	)
-	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel, req.FileThreads, req.CrawlerThreads)
+	config.UpdateConfig(h.repo, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel, req.FileThreads, req.CrawlerThreads)
 	success(c, config.GetConfig())
 }
 
-// OpenFolder 在 Windows 资源管理器中打开指定目录或定位文件
-func (h *ServerHandler) OpenFolder(c *gin.Context) {
-	var req struct {
-		Path string `json:"path"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.Path == "" {
-		fail(c, 400, "请提供有效路径")
-		return
-	}
-
-	cleanPath := filepath.Clean(req.Path)
-	logger.Info("API 在 Windows 资源管理器中定位文件/目录", zap.String("path", cleanPath))
-	cmd := exec.Command("explorer.exe", "/select,", cleanPath)
-	if err := cmd.Start(); err != nil {
-		exec.Command("explorer.exe", filepath.Dir(cleanPath)).Start()
-	}
-	success(c, true)
-}
-
-// HandleWebSocket 处理 WebSocket 客户端连接
+// HandleWebSocket 处理 WebSocket 客户端连接 (接入 WSHub 异步多路复用)
 func (h *ServerHandler) HandleWebSocket(c *gin.Context) {
 	conn, err := h.wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return
 	}
-	h.wsMu.Lock()
-	h.wsClients[conn] = true
-	h.wsMu.Unlock()
 
-	defer func() {
-		h.wsMu.Lock()
-		delete(h.wsClients, conn)
-		h.wsMu.Unlock()
-		conn.Close()
-	}()
-
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
+	client := &WSClient{
+		hub:  h.hub,
+		conn: conn,
+		send: make(chan []byte, 256),
 	}
+
+	h.hub.mu.Lock()
+	h.hub.clients[client] = true
+	h.hub.mu.Unlock()
+
+	go client.WritePump()
+	go client.ReadPump()
 }
 
 func (h *ServerHandler) BroadcastCategorySyncProgress(st crawler.CategorySyncStatus) {
-	h.broadcastWS(map[string]interface{}{
+	h.hub.Broadcast(map[string]interface{}{
 		"type": "CATEGORY_SYNC_PROGRESS",
 		"data": st,
 	})
 }
 
 func (h *ServerHandler) BroadcastCategorySyncFinished(st crawler.CategorySyncStatus) {
-	h.broadcastWS(map[string]interface{}{
+	h.hub.Broadcast(map[string]interface{}{
 		"type": "CATEGORY_SYNC_FINISHED",
 		"data": st,
 	})
 }
 
-func (h *ServerHandler) broadcastWS(data interface{}) {
-	h.wsMu.Lock()
-	defer h.wsMu.Unlock()
-	for conn := range h.wsClients {
-		conn.WriteJSON(data)
-	}
-}
-
-// Shutdown 优雅关闭系统：终止爬虫与下载，并退出主进程
+// Shutdown 优雅关闭系统：广播停机通知并唤醒主进程退出信号
 func (h *ServerHandler) Shutdown(c *gin.Context) {
-	logger.Info("📢 收到 Web 端退出系统请求，正在执行优雅停机...")
+	logger.Info("📢 收到 Web 端退出系统请求，正在触发主进程优雅停机...")
 
-	// 1. 停止爬虫任务
-	if h.crawlerEngine != nil {
-		h.crawlerEngine.Stop()
-	}
-
-	// 2. 终止所有下载任务
-	if h.downManager != nil {
-		h.downManager.StopAll()
-	}
-
-	// 3. 广播停机通知给所有 WebSocket 客户端
-	h.broadcastWS(map[string]interface{}{
+	// 1. 广播停机通知给所有 WebSocket 客户端
+	h.hub.Broadcast(map[string]interface{}{
 		"type": "SYSTEM_SHUTDOWN",
 		"data": gin.H{"message": "系统正在安全关闭"},
 	})
 
-	// 4. 返回 HTTP 成功响应
+	// 2. 返回 HTTP 成功响应
 	success(c, gin.H{
-		"message": "系统正在优雅关闭，所有正在运行的任务已终止",
+		"message": "系统正在优雅关闭，所有正在运行的任务已安全保存",
 	})
 
-	// 5. 延迟异步退出进程，确保 HTTP/WS 响应正常发出
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		logger.Info("==========================================================")
-		logger.Info("     华为产品文档下载管理器 - HWDocsDownGo 已安全退出     ")
-		logger.Info("==========================================================")
-		_ = logger.Sync()
-		os.Exit(0)
-	}()
+	// 3. 异步向主进程发送中断信号触发 main.go 统一停机收尾
+	logger.SafeGo("api-shutdown-trigger", func() {
+		time.Sleep(300 * time.Millisecond)
+		if h.quitChan != nil {
+			select {
+			case h.quitChan <- os.Interrupt:
+			default:
+			}
+		} else {
+			os.Exit(0)
+		}
+	})
 }

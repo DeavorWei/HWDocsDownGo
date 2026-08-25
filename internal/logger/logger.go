@@ -14,14 +14,32 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+type logEvent struct {
+	level string
+	msg   string
+}
+
 var (
-	L           *zap.Logger
-	Sugar       *zap.SugaredLogger
-	atomicLevel = zap.NewAtomicLevelAt(zapcore.InfoLevel)
-	listeners   []func(level string, msg string)
-	listenerMu  sync.RWMutex
-	currentDir  string
+	L                *zap.Logger
+	Sugar            *zap.SugaredLogger
+	atomicLevel      = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+	listeners        []func(level string, msg string)
+	listenerMu       sync.RWMutex
+	logBroadcastChan = make(chan logEvent, 2048)
+	currentDir       string
 )
+
+func init() {
+	go func() {
+		for ev := range logBroadcastChan {
+			listenerMu.RLock()
+			for _, fn := range listeners {
+				fn(ev.level, ev.msg)
+			}
+			listenerMu.RUnlock()
+		}
+	}()
+}
 
 // InitLogger 初始化 Zap 高性能日志记录器
 // 1. 每次程序启动则创建一个新的 log.log 文件，旧的 log.log 按照 日期+时间 (YYYY-MM-DD_HH-mm-ss.log) 进行重命名转储
@@ -245,10 +263,10 @@ func SubscribeLog(fn func(level string, msg string)) {
 }
 
 func broadcast(level string, msg string) {
-	listenerMu.RLock()
-	defer listenerMu.RUnlock()
-	for _, fn := range listeners {
-		go fn(level, msg)
+	select {
+	case logBroadcastChan <- logEvent{level: level, msg: msg}:
+	default:
+		// 缓冲队列满时丢弃，避免阻塞业务日志输出
 	}
 }
 
@@ -324,12 +342,27 @@ func formatLogMsg(msg string, fields ...zap.Field) string {
 	}
 	res := msg + " |"
 	for _, f := range fields {
-		if f.String != "" {
+		switch f.Type {
+		case zapcore.StringType:
 			res += fmt.Sprintf(" %s=%s", f.Key, f.String)
-		} else if f.Integer != 0 {
+		case zapcore.Int64Type, zapcore.Int32Type, zapcore.Int16Type, zapcore.Int8Type, zapcore.Uint64Type, zapcore.Uint32Type:
 			res += fmt.Sprintf(" %s=%d", f.Key, f.Integer)
-		} else if f.Interface != nil {
-			res += fmt.Sprintf(" %s=%v", f.Key, f.Interface)
+		case zapcore.BoolType:
+			res += fmt.Sprintf(" %s=%t", f.Key, f.Integer == 1)
+		case zapcore.DurationType:
+			res += fmt.Sprintf(" %s=%v", f.Key, time.Duration(f.Integer))
+		case zapcore.ErrorType:
+			if err, ok := f.Interface.(error); ok && err != nil {
+				res += fmt.Sprintf(" %s=%v", f.Key, err)
+			}
+		default:
+			if f.String != "" {
+				res += fmt.Sprintf(" %s=%s", f.Key, f.String)
+			} else if f.Interface != nil {
+				res += fmt.Sprintf(" %s=%v", f.Key, f.Interface)
+			} else {
+				res += fmt.Sprintf(" %s=%d", f.Key, f.Integer)
+			}
 		}
 	}
 	return res

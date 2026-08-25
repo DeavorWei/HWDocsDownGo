@@ -84,7 +84,7 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 
 	cfg := config.GetConfig()
 	numWorkers := 1
-	if cfg != nil && cfg.CrawlerThreads > 0 {
+	if cfg.CrawlerThreads > 0 {
 		numWorkers = cfg.CrawlerThreads
 	}
 	if numWorkers > 32 {
@@ -119,7 +119,8 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 
 	for w := 1; w <= numWorkers; w++ {
 		wg.Add(1)
-		go func(workerID int) {
+		workerID := w
+		logger.SafeGo(fmt.Sprintf("crawler-worker-%d", workerID), func() {
 			defer wg.Done()
 			workerTag := fmt.Sprintf("[爬虫-%d]", workerID)
 
@@ -143,7 +144,7 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 				)
 
 				e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-				docs, err := e.docCrawler.FetchDocsByProduct(prod, task.lineName, task.catName)
+				docs, err := e.docCrawler.FetchDocsByProductWithContext(ctx, prod, task.lineName, task.catName)
 				if err == nil && len(docs) > 0 {
 					atomic.AddInt64(&totalDocsCount, int64(len(docs)))
 					send("   %s 📄 型号 [%s] 发现并入库 %d 篇产品文档", workerTag, prod.Name, len(docs))
@@ -167,7 +168,7 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 					onProgress(int(done), task.total, fmt.Sprintf("型号: %s (%s)", prod.Name, workerTag))
 				}
 			}
-		}(w)
+		})
 	}
 
 	wg.Wait()
@@ -189,12 +190,12 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 
 	cfg := config.GetConfig()
 	threads := 1
-	if cfg != nil && cfg.CrawlerThreads > 0 {
+	if cfg.CrawlerThreads > 0 {
 		threads = cfg.CrawlerThreads
 	}
 	logger.Info("启动全量深度文档爬取任务", zap.Int("crawlerThreads", threads))
 
-	go func() {
+	logger.SafeGo("full-crawl-main", func() {
 		defer func() {
 			e.mu.Lock()
 			e.isBusy = false
@@ -278,7 +279,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 		send("🎉 全量爬取任务完成！耗时: %v", elapsed)
 		send("📊 统计报告: 产品线 = %d 条, 产品型号 = %d 个, 成功入库文档 = %d 篇", totalLines, totalProductsCount, totalDocsCount)
 		e.notifyFinished(true, "全量爬取完成")
-	}()
+	})
 
 	return nil
 }
@@ -289,6 +290,11 @@ func (e *CrawlerEngine) StartScopedCrawl(
 	onLog func(string),
 	onProgress func(current, total int, currentItem string),
 ) error {
+	// 【关键修复】：若入参全为空，在未加锁前直接分流至 StartFullCrawl，杜绝自锁
+	if categoryID == "" && lineID == "" && productID == "" {
+		return e.StartFullCrawl(onLog, onProgress)
+	}
+
 	e.mu.Lock()
 	if e.isBusy {
 		e.mu.Unlock()
@@ -302,7 +308,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 
 	cfg := config.GetConfig()
 	threads := 1
-	if cfg != nil && cfg.CrawlerThreads > 0 {
+	if cfg.CrawlerThreads > 0 {
 		threads = cfg.CrawlerThreads
 	}
 
@@ -313,7 +319,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 		zap.Int("crawlerThreads", threads),
 	)
 
-	go func() {
+	logger.SafeGo("scoped-crawl-main", func() {
 		defer func() {
 			e.mu.Lock()
 			e.isBusy = false
@@ -348,7 +354,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			}
 
 			e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-			docs, err := e.docCrawler.FetchDocsByProduct(*prod, lineName, "")
+			docs, err := e.docCrawler.FetchDocsByProductWithContext(ctx, *prod, lineName, "")
 			if err != nil {
 				if IsWsfCheckError(err) {
 					logger.Warn("网关 WSF 安全校验拦截熔断", zap.String("product", prodName))
@@ -458,7 +464,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 
 		// 4. 若无指定，执行全量深度爬取
 		_ = e.StartFullCrawl(onLog, onProgress)
-	}()
+	})
 
 	return nil
 }

@@ -16,14 +16,15 @@ type Category struct {
 
 // ProductLine 二级产品线（如：交换机、路由器、WLAN等）
 type ProductLine struct {
-	ID         string    `gorm:"primaryKey;column:id" json:"id"`
-	CategoryID string    `gorm:"column:category_id;index" json:"categoryId"`
-	Name       string    `gorm:"column:name;index" json:"name"`
-	NameURL    string    `gorm:"column:name_url" json:"nameUrl"`
-	ProID      string    `gorm:"column:pro_id" json:"proId"`
-	Products   []Product `gorm:"foreignKey:ProductLineID" json:"products,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID           string    `gorm:"primaryKey;column:id" json:"id"`
+	CategoryID   string    `gorm:"column:category_id;index" json:"categoryId"`
+	CategoryName string    `gorm:"column:category_name" json:"categoryName"`
+	Name         string    `gorm:"column:name;index" json:"name"`
+	NameURL      string    `gorm:"column:name_url" json:"nameUrl"`
+	ProID        string    `gorm:"column:pro_id" json:"proId"`
+	Products     []Product `gorm:"foreignKey:ProductLineID" json:"products,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // Product 产品系列/具体产品（如：CloudEngine 58&68&78&88&98, CloudEngine S16700 等）
@@ -52,8 +53,9 @@ type SubModel struct {
 
 // Version 大版本（如：V200R025, V300R024 等）
 type Version struct {
-	ID        string    `gorm:"primaryKey;column:id" json:"id"`
+	ID        string    `gorm:"primaryKey;column:id" json:"id"` // 组合主键 "ProductID_RawID"
 	ProductID string    `gorm:"column:product_id;index" json:"productId"`
+	RawID     string    `gorm:"column:raw_id;index" json:"rawId"`
 	Name      string    `gorm:"column:name;index" json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

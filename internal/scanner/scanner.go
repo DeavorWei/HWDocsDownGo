@@ -48,7 +48,7 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 
 	logger.Info("开始扫描本地文档目录", zap.String("dirPath", dirPath))
 
-	// 1. 获取数据库中所有文档
+	// 1. 获取数据库中所有文档并构建内存倒排索引
 	allDocsResult, err := s.repo.QueryDocuments(store.DocFilterQuery{Page: 1, PageSize: 100000})
 	if err != nil {
 		logger.Error("扫描文档失败: 查询数据库文档错误", zap.Error(err))
@@ -56,6 +56,26 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 	}
 	allDocs := allDocsResult.Items
 	logger.Debug("加载数据库全量文档用于文件名与特征比对", zap.Int("dbDocsCount", len(allDocs)))
+
+	// 构建 Hash 索引：NID 索引、规范化文档名索引、规范化文件名索引
+	nidDocMap := make(map[string]*store.Document, len(allDocs))
+	exactNameMap := make(map[string]*store.Document, len(allDocs))
+	exactFileNameMap := make(map[string]*store.Document, len(allDocs))
+
+	for i := range allDocs {
+		d := &allDocs[i]
+		if d.NID != "" {
+			nidDocMap[strings.ToUpper(d.NID)] = d
+		}
+		normName := normalizeName(d.Name)
+		if normName != "" {
+			exactNameMap[normName] = d
+		}
+		normFileName := normalizeName(d.FileName)
+		if normFileName != "" {
+			exactFileNameMap[normFileName] = d
+		}
+	}
 
 	totalFiles := 0
 	matchedMap := make(map[string]string) // nid -> localPath
@@ -73,53 +93,48 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 
 		totalFiles++
 		fileName := info.Name()
-		normFileName := normalizeName(fileName)
+		upperFileName := strings.ToUpper(fileName)
 		baseWithoutExt := normalizeName(strings.TrimSuffix(fileName, filepath.Ext(fileName)))
+		normFileName := normalizeName(fileName)
 
-		for _, d := range allDocs {
-			if _, already := matchedMap[d.NID]; already {
-				continue
+		var targetDoc *store.Document
+
+		// 规则 1: 检查文件名中是否包含 [NID] 或以 NID 为特征
+		for nid, d := range nidDocMap {
+			if strings.Contains(upperFileName, nid) {
+				targetDoc = d
+				break
 			}
+		}
 
-			// 规则 1: 文件名中包含精确的 NID (例如 EDOC1100512860)
-			if strings.Contains(strings.ToUpper(fileName), strings.ToUpper(d.NID)) {
-				matchedMap[d.NID] = path
-				logger.Debug("通过 NID 精确匹配到本地文件",
-					zap.String("nid", d.NID),
-					zap.String("docName", d.Name),
+		// 规则 2: 精准全字匹配 (去除符号与空格后一致)
+		if targetDoc == nil {
+			if d, ok := exactFileNameMap[normFileName]; ok {
+				targetDoc = d
+			} else if d, ok := exactNameMap[normFileName]; ok {
+				targetDoc = d
+			} else if d, ok := exactFileNameMap[baseWithoutExt]; ok {
+				targetDoc = d
+			} else if d, ok := exactNameMap[baseWithoutExt]; ok {
+				targetDoc = d
+			}
+		}
+
+		if targetDoc != nil {
+			if _, already := matchedMap[targetDoc.NID]; !already {
+				matchedMap[targetDoc.NID] = path
+				logger.Debug("本地文件精准匹配到文档",
+					zap.String("nid", targetDoc.NID),
+					zap.String("docName", targetDoc.Name),
 					zap.String("filePath", path),
 				)
 				updatedDocs = append(updatedDocs, Doc{
-					NID:          d.NID,
-					Name:         d.Name,
+					NID:          targetDoc.NID,
+					Name:         targetDoc.Name,
 					LocalPath:    path,
-					PublishDate:  d.PublishDate,
-					IsNewVersion: d.IsNewVersion,
+					PublishDate:  targetDoc.PublishDate,
+					IsNewVersion: targetDoc.IsNewVersion,
 				})
-				break
-			}
-
-			// 规则 2: 文件名与文档名称（去掉符号与空格）匹配
-			normDocName := normalizeName(d.Name)
-			normDocFileName := normalizeName(d.FileName)
-
-			if normFileName == normDocName || normFileName == normDocFileName ||
-				baseWithoutExt == normDocName || baseWithoutExt == normDocFileName ||
-				strings.Contains(normFileName, normDocName) || strings.Contains(normDocName, baseWithoutExt) {
-				matchedMap[d.NID] = path
-				logger.Debug("通过文件名模糊特征匹配到本地文件",
-					zap.String("nid", d.NID),
-					zap.String("docName", d.Name),
-					zap.String("filePath", path),
-				)
-				updatedDocs = append(updatedDocs, Doc{
-					NID:          d.NID,
-					Name:         d.Name,
-					LocalPath:    path,
-					PublishDate:  d.PublishDate,
-					IsNewVersion: d.IsNewVersion,
-				})
-				break
 			}
 		}
 
@@ -131,9 +146,9 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 		return nil, err
 	}
 
-	// 3. 批量更新数据库打标
+	// 3. 批量更新数据库打标（事务批量更新）
 	if len(matchedMap) > 0 {
-		s.repo.BatchUpdateDocsDownloaded(matchedMap)
+		_ = s.repo.BatchUpdateDocsDownloaded(matchedMap)
 		logger.Info("批量打标已下载文档成功", zap.Int("updatedDocs", len(matchedMap)))
 	}
 

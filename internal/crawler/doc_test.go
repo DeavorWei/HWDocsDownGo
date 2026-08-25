@@ -285,3 +285,24 @@ func TestStoreAndQueryWithNewFields(t *testing.T) {
 			doc1.PublishDate, doc1.IsNewVersion, doc1.DocCategory)
 	}
 }
+
+func TestParseSizeStringToBytes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"100", 100 * 1024},
+		{"1,024.5", int64(1049088)},
+		{"715,836.18", int64(733016248)},
+		{"0", 0},
+		{"", 0},
+		{"invalid", 0},
+	}
+
+	for _, tt := range tests {
+		got := ParseSizeStringToBytes(tt.input)
+		if got != tt.expected {
+			t.Errorf("ParseSizeStringToBytes(%q) = %d, expected %d", tt.input, got, tt.expected)
+		}
+	}
+}
