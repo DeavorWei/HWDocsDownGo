@@ -71,8 +71,10 @@ type Document struct {
 	SubModelID      string    `gorm:"column:sub_model_id;index" json:"subModelId"`
 	SubModelName    string    `gorm:"column:sub_model_name" json:"subModelName"`
 	Name            string    `gorm:"column:name;index" json:"name"`
-	DocType         string    `gorm:"column:doc_type;index" json:"docType"` // HDX | CHM | PDF | ZIP | 多媒体 | OTHER
-	FileName        string    `gorm:"column:file_name" json:"fileName"`
+	DocType          string    `gorm:"column:doc_type;index" json:"docType"`                         // HDX | CHM | PDF | ZIP | 多媒体 | OTHER
+	DocCategory      string    `gorm:"column:doc_category;index" json:"docCategory"`                 // 资料分类/标签：产品文档包 | 资料书架 | 方案概述 | 特性描述 | 配置指南 等
+	DocCategoryGroup string    `gorm:"column:doc_category_group;index" json:"docCategoryGroup"`     // 顶级资料分类：文档合集 | 了解产品 | 了解方案 | 参考指南 等
+	FileName         string    `gorm:"column:file_name" json:"fileName"`
 	FileSizeBytes   int64     `gorm:"column:file_size_bytes" json:"fileSizeBytes"`
 	FileSizeStr     string    `gorm:"column:file_size_str" json:"fileSizeStr"`
 	DownloadURL     string    `gorm:"column:download_url" json:"downloadUrl"`

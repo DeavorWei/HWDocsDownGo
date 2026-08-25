@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -13,13 +14,40 @@ import (
 	"hwdocsdown/internal/store"
 )
 
+type CategorySyncStatus struct {
+	IsSyncing       bool   `json:"isSyncing"`
+	IsInitial       bool   `json:"isInitial"`
+	CurrentLine     int    `json:"currentLine"`
+	TotalLines      int    `json:"totalLines"`
+	CurrentLineName string `json:"currentLineName"`
+	TotalProducts   int    `json:"totalProducts"`
+	TotalCategories int    `json:"totalCategories"`
+}
+
 type CategoryCrawler struct {
-	client *HttpClient
-	repo   *store.Repository
+	client     *HttpClient
+	repo       *store.Repository
+	syncStatus CategorySyncStatus
+	mu         sync.RWMutex
 }
 
 func NewCategoryCrawler(client *HttpClient, repo *store.Repository) *CategoryCrawler {
-	return &CategoryCrawler{client: client, repo: repo}
+	return &CategoryCrawler{
+		client: client,
+		repo:   repo,
+	}
+}
+
+func (c *CategoryCrawler) GetSyncStatus() CategorySyncStatus {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.syncStatus
+}
+
+func (c *CategoryCrawler) setSyncStatus(st CategorySyncStatus) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.syncStatus = st
 }
 
 // FetchCategories 抓取全部分类和产品线
@@ -267,6 +295,74 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 	}
 
 	return subModels, versions, nil
+}
+
+// SyncAllCategoriesAndProducts 同步全量产品大类、二级产品线以及产品型号树
+func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategorySyncStatus), onFinished func(CategorySyncStatus)) error {
+	existingCats, _ := c.repo.GetAllCategories()
+	isInitial := len(existingCats) == 0
+
+	status := CategorySyncStatus{
+		IsSyncing: true,
+		IsInitial: isInitial,
+	}
+	c.setSyncStatus(status)
+
+	if onProgress != nil {
+		onProgress(status)
+	}
+
+	logger.Info("正在连接华为官网更新产品大类与二级产品线数据...")
+	categories, err := c.FetchCategories()
+	if err != nil {
+		logger.Warn("更新产品大类失败", zap.Error(err))
+		status.IsSyncing = false
+		c.setSyncStatus(status)
+		if onFinished != nil {
+			onFinished(status)
+		}
+		return err
+	}
+
+	status.TotalCategories = len(categories)
+	var allLines []store.ProductLine
+	for _, cat := range categories {
+		lines, _ := c.repo.GetProductLinesByCategoryID(cat.ID)
+		allLines = append(allLines, lines...)
+	}
+	status.TotalLines = len(allLines)
+	c.setSyncStatus(status)
+	if onProgress != nil {
+		onProgress(status)
+	}
+
+	totalProducts := 0
+	for lineIdx, line := range allLines {
+		status.CurrentLine = lineIdx + 1
+		status.CurrentLineName = line.Name
+		prods, err := c.FetchProductsByLine(line.ID, line.ProID)
+		if err == nil {
+			totalProducts += len(prods)
+		}
+		status.TotalProducts = totalProducts
+		c.setSyncStatus(status)
+		if onProgress != nil {
+			onProgress(status)
+		}
+	}
+
+	status.IsSyncing = false
+	c.setSyncStatus(status)
+	if onFinished != nil {
+		onFinished(status)
+	}
+
+	logger.Info("产品分类树更新完成",
+		zap.Int("categories", len(categories)),
+		zap.Int("lines", len(allLines)),
+		zap.Int("products", totalProducts),
+	)
+	return nil
 }
 
 func extractPidFromURL(urlStr string) string {

@@ -32,6 +32,7 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 		apiGroup.GET("/categories", h.GetCategories)
 		apiGroup.GET("/products", h.GetProducts)
 		apiGroup.GET("/submodels-versions", h.GetSubModelsAndVersions)
+		apiGroup.GET("/doc-categories", h.GetDocCategories)
 		apiGroup.GET("/documents", h.QueryDocuments)
 		apiGroup.POST("/download", h.AddDownloadTask)
 		apiGroup.GET("/tasks", h.GetAllTasks)
@@ -44,6 +45,8 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 		apiGroup.POST("/crawl/start", h.StartCrawl)
 		apiGroup.POST("/crawl/stop", h.StopCrawl)
 		apiGroup.GET("/crawl/status", h.GetCrawlStatus)
+		apiGroup.GET("/category-sync/status", h.GetCategorySyncStatus)
+		apiGroup.POST("/category-sync/start", h.StartCategorySync)
 
 		apiGroup.GET("/statistics", h.GetStatistics)
 		apiGroup.GET("/settings", h.GetSettings)

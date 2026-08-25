@@ -131,6 +131,18 @@ func (h *ServerHandler) GetSubModelsAndVersions(c *gin.Context) {
 	})
 }
 
+// GetDocCategories 获取资料分类/标签列表
+func (h *ServerHandler) GetDocCategories(c *gin.Context) {
+	productID := c.Query("productId")
+	lineID := c.Query("lineId")
+	cats, err := h.repo.GetDocCategories(productID, lineID)
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	success(c, cats)
+}
+
 // QueryDocuments 多条件筛选文档
 func (h *ServerHandler) QueryDocuments(c *gin.Context) {
 	var q store.DocFilterQuery
@@ -229,10 +241,12 @@ func (h *ServerHandler) TriggerLocalScan(c *gin.Context) {
 	success(c, res)
 }
 
-// StartCrawl 启动在线爬虫（全量或指定产品线）
+// StartCrawl 启动在线爬虫（支持全量、大类、产品线或单个型号）
 func (h *ServerHandler) StartCrawl(c *gin.Context) {
 	var req struct {
-		LineID string `json:"lineId"`
+		CategoryID string `json:"categoryId"`
+		LineID     string `json:"lineId"`
+		ProductID  string `json:"productId"`
 	}
 	c.ShouldBindJSON(&req)
 
@@ -254,13 +268,13 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 		})
 	}
 
-	if req.LineID != "" {
-		err := h.crawlerEngine.StartLineCrawl(req.LineID, onLog)
+	if req.CategoryID != "" || req.LineID != "" || req.ProductID != "" {
+		err := h.crawlerEngine.StartScopedCrawl(req.CategoryID, req.LineID, req.ProductID, onLog, onProgress)
 		if err != nil {
 			fail(c, 400, err.Error())
 			return
 		}
-		success(c, "已启动指定产品线深度爬取")
+		success(c, "已启动定向爬取任务")
 		return
 	}
 
@@ -301,19 +315,48 @@ func (h *ServerHandler) GetSettings(c *gin.Context) {
 	success(c, cfg)
 }
 
+// GetCategorySyncStatus 获取分类树同步状态
+func (h *ServerHandler) GetCategorySyncStatus(c *gin.Context) {
+	st := h.catCrawler.GetSyncStatus()
+	success(c, st)
+}
+
+// StartCategorySync 手动触发产品分类树同步
+func (h *ServerHandler) StartCategorySync(c *gin.Context) {
+	if h.catCrawler.GetSyncStatus().IsSyncing {
+		fail(c, 400, "产品分类树正在同步中，请稍候")
+		return
+	}
+	go func() {
+		h.catCrawler.SyncAllCategoriesAndProducts(func(st crawler.CategorySyncStatus) {
+			h.broadcastWS(map[string]interface{}{
+				"type": "CATEGORY_SYNC_PROGRESS",
+				"data": st,
+			})
+		}, func(st crawler.CategorySyncStatus) {
+			h.broadcastWS(map[string]interface{}{
+				"type": "CATEGORY_SYNC_FINISHED",
+				"data": st,
+			})
+		})
+	}()
+	success(c, "已启动产品分类树同步")
+}
+
 // UpdateSettings 更新配置
 func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 	var req struct {
-		DownloadDir    string `json:"downloadDir"`
-		MaxConcurrent  int    `json:"maxConcurrent"`
-		RequestDelayMs int    `json:"requestDelayMs"`
-		CustomCookie   string `json:"customCookie"`
+		DownloadDir        string `json:"downloadDir"`
+		MaxConcurrent      int    `json:"maxConcurrent"`
+		RequestDelayMs     int    `json:"requestDelayMs"`
+		CustomCookie       string `json:"customCookie"`
+		AutoSyncCategories bool   `json:"autoSyncCategories"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, 400, "参数格式错误")
 		return
 	}
-	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie)
+	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories)
 	success(c, config.GetConfig())
 }
 
@@ -358,6 +401,20 @@ func (h *ServerHandler) HandleWebSocket(c *gin.Context) {
 			break
 		}
 	}
+}
+
+func (h *ServerHandler) BroadcastCategorySyncProgress(st crawler.CategorySyncStatus) {
+	h.broadcastWS(map[string]interface{}{
+		"type": "CATEGORY_SYNC_PROGRESS",
+		"data": st,
+	})
+}
+
+func (h *ServerHandler) BroadcastCategorySyncFinished(st crawler.CategorySyncStatus) {
+	h.broadcastWS(map[string]interface{}{
+		"type": "CATEGORY_SYNC_FINISHED",
+		"data": st,
+	})
 }
 
 func (h *ServerHandler) broadcastWS(data interface{}) {

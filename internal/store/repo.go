@@ -59,9 +59,9 @@ func (r *Repository) UpsertDocuments(docs []Document) error {
 	return r.db.Clauses(clause.OnConflict{
 		DoUpdates: clause.AssignmentColumns([]string{
 			"product_name", "product_line_name", "category_name", "version_id", "version_name",
-			"sub_model_id", "sub_model_name", "name", "doc_type", "file_name", "file_size_bytes",
-			"file_size_str", "download_url", "part_no", "publish_date", "publish_time",
-			"last_update_time", "is_new_version", "crawl_time", "updated_at",
+			"sub_model_id", "sub_model_name", "name", "doc_type", "doc_category", "doc_category_group",
+			"file_name", "file_size_bytes", "file_size_str", "download_url", "part_no", "publish_date",
+			"publish_time", "last_update_time", "is_new_version", "crawl_time", "updated_at",
 		}),
 	}).CreateInBatches(&docs, 200).Error
 }
@@ -78,6 +78,36 @@ func (r *Repository) GetProductLinesByCategoryID(catID string) ([]ProductLine, e
 	var lines []ProductLine
 	err := r.db.Where("category_id = ?", catID).Find(&lines).Error
 	return lines, err
+}
+
+// GetProductByID 根据 ID 获取产品型号
+func (r *Repository) GetProductByID(id string) (*Product, error) {
+	var prod Product
+	err := r.db.Where("id = ?", id).First(&prod).Error
+	if err != nil {
+		return nil, err
+	}
+	return &prod, nil
+}
+
+// GetProductLineByID 根据 ID 获取产品线
+func (r *Repository) GetProductLineByID(id string) (*ProductLine, error) {
+	var line ProductLine
+	err := r.db.Where("id = ?", id).First(&line).Error
+	if err != nil {
+		return nil, err
+	}
+	return &line, nil
+}
+
+// GetCategoryByID 根据 ID 获取大类
+func (r *Repository) GetCategoryByID(id string) (*Category, error) {
+	var cat Category
+	err := r.db.Preload("Lines").Where("id = ?", id).First(&cat).Error
+	if err != nil {
+		return nil, err
+	}
+	return &cat, nil
 }
 
 // GetProductsByProductLineID 获取产品线下的产品系列
@@ -102,16 +132,18 @@ func (r *Repository) GetSubModelsAndVersions(productID string) ([]SubModel, []Ve
 
 // DocFilterQuery 文档筛选查询参数
 type DocFilterQuery struct {
-	CategoryID    string `form:"categoryId"`
-	ProductLineID string `form:"productLineId"`
-	ProductID     string `form:"productId"`
-	VersionID     string `form:"versionId"`
-	SubModelID    string `form:"subModelId"`
-	DocType       string `form:"docType"`      // 全部, HDX, CHM, PDF 等
-	IsDownloaded  *int   `form:"isDownloaded"` // 0 或 1，空表示全部
-	Keyword       string `form:"keyword"`
-	Page          int    `form:"page,default=1"`
-	PageSize      int    `form:"pageSize,default=20"`
+	CategoryID       string `form:"categoryId"`
+	ProductLineID    string `form:"productLineId"`
+	ProductID        string `form:"productId"`
+	VersionID        string `form:"versionId"`
+	SubModelID       string `form:"subModelId"`
+	DocType          string `form:"docType"`          // 全部, HDX, CHM, PDF, 多媒体 等
+	DocCategory      string `form:"docCategory"`      // 产品文档包, 资料书架, 方案概述, 特性描述 等
+	DocCategoryGroup string `form:"docCategoryGroup"` // 文档合集, 了解产品, 了解方案 等
+	IsDownloaded     *int   `form:"isDownloaded"`     // 0 或 1，空表示全部
+	Keyword          string `form:"keyword"`
+	Page             int    `form:"page,default=1"`
+	PageSize         int    `form:"pageSize,default=20"`
 }
 
 // DocFilterResult 文档筛选分页返回
@@ -148,12 +180,18 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	if q.DocType != "" && strings.ToUpper(q.DocType) != "ALL" {
 		query = query.Where("doc_type = ? OR UPPER(doc_type) = ?", q.DocType, strings.ToUpper(q.DocType))
 	}
+	if q.DocCategory != "" && strings.ToUpper(q.DocCategory) != "ALL" {
+		query = query.Where("doc_category = ?", q.DocCategory)
+	}
+	if q.DocCategoryGroup != "" && strings.ToUpper(q.DocCategoryGroup) != "ALL" {
+		query = query.Where("doc_category_group = ?", q.DocCategoryGroup)
+	}
 	if q.IsDownloaded != nil {
 		query = query.Where("is_downloaded = ?", *q.IsDownloaded)
 	}
 	if q.Keyword != "" {
 		kw := "%" + q.Keyword + "%"
-		query = query.Where("name LIKE ? OR file_name LIKE ? OR product_name LIKE ?", kw, kw, kw)
+		query = query.Where("name LIKE ? OR file_name LIKE ? OR product_name LIKE ? OR doc_category LIKE ? OR doc_category_group LIKE ?", kw, kw, kw, kw, kw)
 	}
 
 	var total int64
@@ -181,6 +219,23 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 		PageSize: q.PageSize,
 		Items:    docs,
 	}, nil
+}
+
+// GetDocCategories 获取数据库中已有的所有资料分类标签列表（如：产品文档包、资料书架、方案概述、特性描述等）
+func (r *Repository) GetDocCategories(productID, productLineID string) ([]string, error) {
+	query := r.db.Model(&Document{}).Where("doc_category != '' AND doc_category IS NOT NULL")
+	if productID != "" {
+		query = query.Where("product_id = ?", productID)
+	} else if productLineID != "" {
+		var pids []string
+		r.db.Model(&Product{}).Where("product_line_id = ?", productLineID).Pluck("id", &pids)
+		if len(pids) > 0 {
+			query = query.Where("product_id IN ?", pids)
+		}
+	}
+	var cats []string
+	err := query.Distinct("doc_category").Pluck("doc_category", &cats).Error
+	return cats, err
 }
 
 // GetDocumentByNID 根据 nid 获取单个文档

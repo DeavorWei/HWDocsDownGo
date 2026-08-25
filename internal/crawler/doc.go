@@ -170,8 +170,22 @@ func ParseSizeStringToBytes(sizeStr string) int64 {
 	return 0
 }
 
+// getAttrZH 从 attributes map 中提取中文标签名
+func getAttrZH(attrs map[string]interface{}) string {
+	if attrs == nil {
+		return ""
+	}
+	if zh, ok := attrs["ZH"].(string); ok && zh != "" {
+		return zh
+	}
+	if zh, ok := attrs["zhName"].(string); ok && zh != "" {
+		return zh
+	}
+	return ""
+}
+
 // ParseDocItemFromJSON 从接口 JSON 项解析为标准 Document
-func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, productLineName, categoryName string) *store.Document {
+func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, productLineName, categoryName, docCategoryGroup, docCategory string) *store.Document {
 	nid, _ := item["nid"].(string)
 	name, _ := item["name"].(string)
 	if nid == "" || name == "" {
@@ -216,25 +230,27 @@ func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, p
 
 	now := time.Now()
 	return &store.Document{
-		NID:             nid,
-		ProductID:       productID,
-		ProductName:     productName,
-		ProductLineName: productLineName,
-		CategoryName:    categoryName,
-		VersionID:       versionID,
-		VersionName:     versionName,
-		Name:            name,
-		DocType:         docType,
-		FileName:        fileName,
-		FileSizeBytes:   fileSizeBytes,
-		FileSizeStr:     fileSizeStr,
-		PublishDate:     publishDate,
-		PublishTime:     publishTime,
-		LastUpdateTime:  lastUpdateTime,
-		IsNewVersion:    false, // 稍后在 MarkNewVersions 中统筹计算
-		CrawlTime:       now,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		NID:              nid,
+		ProductID:        productID,
+		ProductName:      productName,
+		ProductLineName:  productLineName,
+		CategoryName:     categoryName,
+		VersionID:        versionID,
+		VersionName:      versionName,
+		Name:             name,
+		DocType:          docType,
+		DocCategory:      docCategory,
+		DocCategoryGroup: docCategoryGroup,
+		FileName:         fileName,
+		FileSizeBytes:    fileSizeBytes,
+		FileSizeStr:      fileSizeStr,
+		PublishDate:      publishDate,
+		PublishTime:      publishTime,
+		LastUpdateTime:   lastUpdateTime,
+		IsNewVersion:     false, // 稍后在 MarkNewVersions 中统筹计算
+		CrawlTime:        now,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 }
 
@@ -340,55 +356,82 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 		return nil, fmt.Errorf("解析文档列表 JSON 失败: %w", err)
 	}
 
-	// 2. 递归遍历 subAggs 嵌套树提取所有文档
-	var rawDocs []map[string]interface{}
-	var findDocs func(item map[string]interface{})
-	findDocs = func(item map[string]interface{}) {
-		if nid, ok := item["nid"].(string); ok && nid != "" {
-			rawDocs = append(rawDocs, item)
+	// 2. 遍历 resp.Data 提取文档并保留其所属大类与二级分类标签（如：产品文档包、资料书架、方案概述、特性描述等）
+	var docs []store.Document
+	seenNID := make(map[string]bool)
+
+	addDoc := func(item map[string]interface{}, groupName, subName string) {
+		nid, _ := item["nid"].(string)
+		if nid == "" || seenNID[nid] {
 			return
 		}
-		if subAggs, ok := item["subAggs"].([]interface{}); ok {
+		doc := ParseDocItemFromJSON(item, product.ID, product.Name, lineName, catName, groupName, subName)
+		if doc != nil {
+			seenNID[doc.NID] = true
+			docs = append(docs, *doc)
+		}
+	}
+
+	for _, topItem := range resp.Data {
+		var topAttrs map[string]interface{}
+		if ta, ok := topItem["attributes"].(map[string]interface{}); ok {
+			topAttrs = ta
+		}
+		groupName := getAttrZH(topAttrs)
+		if groupName == "" {
+			groupName, _ = topItem["name"].(string)
+		}
+		if groupName == "" {
+			groupName = "其他"
+		}
+
+		if subAggs, ok := topItem["subAggs"].([]interface{}); ok && len(subAggs) > 0 {
 			for _, sub := range subAggs {
 				if subm, ok := sub.(map[string]interface{}); ok {
-					findDocs(subm)
+					var subAttrs map[string]interface{}
+					if sa, ok := subm["attributes"].(map[string]interface{}); ok {
+						subAttrs = sa
+					}
+					subName := getAttrZH(subAttrs)
+					if subName == "" {
+						subName, _ = subm["name"].(string)
+					}
+					if subName == "" {
+						subName = groupName
+					}
+
+					for _, k := range []string{"docList", "list", "documents"} {
+						if list, ok := subm[k].([]interface{}); ok {
+							for _, docItem := range list {
+								if dm, ok := docItem.(map[string]interface{}); ok {
+									addDoc(dm, groupName, subName)
+								}
+							}
+						}
+					}
 				}
 			}
 		}
-		for _, k := range []string{"docList", "list", "documents", "data"} {
-			if list, ok := item[k].([]interface{}); ok {
-				for _, sub := range list {
-					if subm, ok := sub.(map[string]interface{}); ok {
-						findDocs(subm)
+
+		// 直属 docList
+		for _, k := range []string{"docList", "list", "documents"} {
+			if list, ok := topItem[k].([]interface{}); ok {
+				for _, docItem := range list {
+					if dm, ok := docItem.(map[string]interface{}); ok {
+						addDoc(dm, groupName, groupName)
 					}
 				}
 			}
 		}
 	}
 
-	for _, dItem := range resp.Data {
-		findDocs(dItem)
-	}
-
-	// 3. 转换为标准 Document 结构并去重
-	var docs []store.Document
-	seenNID := make(map[string]bool)
-
-	for _, item := range rawDocs {
-		doc := ParseDocItemFromJSON(item, product.ID, product.Name, lineName, catName)
-		if doc != nil && !seenNID[doc.NID] {
-			seenNID[doc.NID] = true
-			docs = append(docs, *doc)
-		}
-	}
-
-	// 4. 对同一产品的所有文档进行新旧版本标记
+	// 3. 对同一产品的所有文档进行新旧版本标记
 	MarkNewVersions(docs)
 
-	// 5. 批量入库
+	// 4. 批量入库
 	if len(docs) > 0 {
 		d.repo.UpsertDocuments(docs)
-		logger.Info("🎉 成功解析、识别新旧版本并入库产品文档",
+		logger.Info("🎉 成功解析分类标签、识别新旧版本并入库产品文档",
 			zap.String("product", product.Name),
 			zap.Int("docCount", len(docs)),
 		)

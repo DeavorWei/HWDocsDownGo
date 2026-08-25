@@ -170,8 +170,12 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 	return nil
 }
 
-// StartLineCrawl 单独抓取某个指定产品线
-func (e *CrawlerEngine) StartLineCrawl(lineID string, onLog func(string)) error {
+// StartScopedCrawl 定向抓取指定层级（产品大类 / 二级产品线 / 产品系列与型号）
+func (e *CrawlerEngine) StartScopedCrawl(
+	categoryID, lineID, productID string,
+	onLog func(string),
+	onProgress func(current, total int, currentItem string),
+) error {
 	e.mu.Lock()
 	if e.isBusy {
 		e.mu.Unlock()
@@ -198,46 +202,170 @@ func (e *CrawlerEngine) StartLineCrawl(lineID string, onLog func(string)) error 
 			}
 		}
 
-		send("🚀 启动指定产品线 [%s] 快速深度爬取...", lineID)
-		prods, err := e.catCrawler.FetchProductsByLine(lineID, lineID)
-		if err != nil {
-			send("❌ 获取产品型号列表失败: %v", err)
-			e.notifyFinished(false, "获取型号列表失败")
+		// 1. 单个产品型号定向爬取
+		if productID != "" {
+			prod, _ := e.repo.GetProductByID(productID)
+			prodName := productID
+			lineName := ""
+			if prod != nil {
+				prodName = prod.Name
+				lineName = prod.ProductLineID
+			} else {
+				prod = &store.Product{ID: productID, Name: productID}
+			}
+
+			send("🚀 启动指定产品型号 [%s] 定向爬取...", prodName)
+			if onProgress != nil {
+				onProgress(1, 1, fmt.Sprintf("型号: %s", prodName))
+			}
+
+			e.catCrawler.FetchSubModelsAndVersions(prod.ID)
+			docs, err := e.docCrawler.FetchDocsByProduct(*prod, lineName, "")
+			if err != nil {
+				if IsWsfCheckError(err) {
+					send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
+					e.notifyFinished(false, "网关安全拦截已熔断")
+					return
+				}
+				send("⚠️ 抓取型号 [%s] 文档异常: %v", prodName, err)
+				e.notifyFinished(false, "抓取文档异常")
+				return
+			}
+
+			send("🎉 产品型号 [%s] 爬取完成！共入库 %d 篇产品文档", prodName, len(docs))
+			e.notifyFinished(true, "产品型号爬取完成")
 			return
 		}
-		send("✅ 成功发现 %d 个产品型号，开始抓取型号版本与文档...", len(prods))
 
-		var docCount int
-
-		for i, prod := range prods {
-			select {
-			case <-ctx.Done():
-				send("🛑 任务已被用户手动停止")
-				e.notifyFinished(false, "任务已停止")
-				return
-			default:
+		// 2. 二级产品线定向爬取
+		if lineID != "" {
+			line, _ := e.repo.GetProductLineByID(lineID)
+			lineName := lineID
+			linePID := lineID
+			if line != nil {
+				lineName = line.Name
+				if line.ProID != "" {
+					linePID = line.ProID
+				}
 			}
 
-			send("   [%d/%d] 正在抓取型号: %s (PID: %s)...", i+1, len(prods), prod.Name, prod.ID)
-			e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-
-			docs, err := e.docCrawler.FetchDocsByProduct(prod, lineID, "")
-			if err == nil && len(docs) > 0 {
-				docCount += len(docs)
-				send("   └─ 发现并入库 %d 篇产品文档", len(docs))
-			} else if IsWsfCheckError(err) {
-				// 首次被拦截立即触发自动熔断
-				send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！")
-				send("🛑 为避免无意义的无效请求，爬虫引擎已自动停止后续爬取任务。")
-				send("💡【解决方案】请在浏览器打开 support.huawei.com 复制请求头中的 Cookie，粘贴到本系统的【系统设置】->【自定义 Cookie】并保存，然后重新启动爬取即可！")
-				e.notifyFinished(false, "网关安全拦截已熔断")
+			send("🚀 启动指定产品线 [%s] 快速深度爬取...", lineName)
+			prods, err := e.catCrawler.FetchProductsByLine(lineID, linePID)
+			if err != nil {
+				send("❌ 获取产品型号列表失败: %v", err)
+				e.notifyFinished(false, "获取型号列表失败")
 				return
 			}
+			send("✅ 成功发现 %d 个产品型号，开始抓取型号版本与文档...", len(prods))
+
+			var docCount int
+			for i, prod := range prods {
+				select {
+				case <-ctx.Done():
+					send("🛑 任务已被用户手动停止")
+					e.notifyFinished(false, "任务已停止")
+					return
+				default:
+				}
+
+				if onProgress != nil {
+					onProgress(i+1, len(prods), fmt.Sprintf("型号: %s", prod.Name))
+				}
+
+				send("   [%d/%d] 正在抓取型号: %s (PID: %s)...", i+1, len(prods), prod.Name, prod.ID)
+				e.catCrawler.FetchSubModelsAndVersions(prod.ID)
+
+				docs, err := e.docCrawler.FetchDocsByProduct(prod, lineName, "")
+				if err == nil && len(docs) > 0 {
+					docCount += len(docs)
+					send("   └─ 发现并入库 %d 篇产品文档", len(docs))
+				} else if IsWsfCheckError(err) {
+					send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
+					e.notifyFinished(false, "网关安全拦截已熔断")
+					return
+				}
+			}
+
+			send("🎉 产品线 [%s] 爬取完成！共收录 %d 个型号，%d 篇产品文档", lineName, len(prods), docCount)
+			e.notifyFinished(true, "产品线爬取完成")
+			return
 		}
 
-		send("🎉 产品线 [%s] 爬取完成！共收录 %d 个型号，%d 篇产品文档", lineID, len(prods), docCount)
-		e.notifyFinished(true, "产品线爬取完成")
+		// 3. 产品大类定向爬取
+		if categoryID != "" {
+			cat, _ := e.repo.GetCategoryByID(categoryID)
+			catName := categoryID
+			if cat != nil {
+				catName = cat.Name
+			}
+
+			send("🚀 启动产品大类 [%s] 全量深度爬取...", catName)
+			lines, _ := e.repo.GetProductLinesByCategoryID(categoryID)
+			if len(lines) == 0 {
+				e.catCrawler.FetchCategories()
+				lines, _ = e.repo.GetProductLinesByCategoryID(categoryID)
+			}
+
+			send("✅ 该大类下共发现 %d 条二级产品线", len(lines))
+			var totalProds int
+			var totalDocs int
+
+			for lineIdx, line := range lines {
+				select {
+				case <-ctx.Done():
+					send("🛑 任务已被用户手动停止")
+					e.notifyFinished(false, "任务已停止")
+					return
+				default:
+				}
+
+				if onProgress != nil {
+					onProgress(lineIdx+1, len(lines), fmt.Sprintf("产品线: %s", line.Name))
+				}
+
+				send("   [%d/%d] 正在分析产品线: %s (PID: %s)...", lineIdx+1, len(lines), line.Name, line.ProID)
+				prods, err := e.catCrawler.FetchProductsByLine(line.ID, line.ProID)
+				if err != nil {
+					send("   ⚠️ 产品线 [%s] 获取型号异常: %v", line.Name, err)
+					continue
+				}
+				totalProds += len(prods)
+
+				for _, prod := range prods {
+					select {
+					case <-ctx.Done():
+						send("🛑 任务已被用户手动停止")
+						e.notifyFinished(false, "任务已停止")
+						return
+					default:
+					}
+
+					e.catCrawler.FetchSubModelsAndVersions(prod.ID)
+					docs, err := e.docCrawler.FetchDocsByProduct(prod, line.Name, catName)
+					if err == nil && len(docs) > 0 {
+						totalDocs += len(docs)
+						send("      📄 型号 [%s] 发现并入库 %d 篇产品文档", prod.Name, len(docs))
+					} else if IsWsfCheckError(err) {
+						send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
+						e.notifyFinished(false, "网关安全拦截已熔断")
+						return
+					}
+				}
+			}
+
+			send("🎉 产品大类 [%s] 爬取完成！共处理 %d 条产品线，%d 个型号，%d 篇产品文档", catName, len(lines), totalProds, totalDocs)
+			e.notifyFinished(true, "大类爬取完成")
+			return
+		}
+
+		// 4. 若无指定，执行全量深度爬取
+		_ = e.StartFullCrawl(onLog, onProgress)
 	}()
 
 	return nil
+}
+
+// StartLineCrawl 单独抓取某个指定产品线 (兼容旧调用)
+func (e *CrawlerEngine) StartLineCrawl(lineID string, onLog func(string)) error {
+	return e.StartScopedCrawl("", lineID, "", onLog, nil)
 }

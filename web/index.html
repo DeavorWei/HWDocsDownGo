@@ -137,6 +137,12 @@
             </div>
           </div>
           
+          <!-- 分类树后台同步指示器 -->
+          <div v-if="categorySyncStatus.isSyncing && !categorySyncStatus.isInitial" class="flex items-center space-x-2 px-3 py-1.5 bg-rose-50 border border-rose-200/80 rounded-full text-xs text-rose-700 font-medium animate-pulse shadow-xs">
+            <i class="fa-solid fa-arrows-rotate animate-spin text-rose-500 text-xs"></i>
+            <span>分类同步中: {{ categorySyncStatus.currentLineName || '正在连接' }} ({{ categorySyncStatus.currentLine }}/{{ categorySyncStatus.totalLines || 60 }})</span>
+          </div>
+
           <button 
             @click="triggerScan"
             :disabled="scanning"
@@ -241,6 +247,27 @@
                 </button>
               </div>
             </div>
+
+            <!-- 资料分类 / 标签过滤栏 (产品文档包、资料书架、方案概述、特性描述等) -->
+            <div class="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-100 text-xs">
+              <span class="text-slate-500 font-medium mr-1 flex items-center">
+                <i class="fa-solid fa-tags text-slate-400 mr-1.5"></i>资料分类:
+              </span>
+              <button 
+                @click="setDocCategoryFilter('ALL')"
+                :class="filters.docCategory === 'ALL' || !filters.docCategory ? 'bg-slate-900 text-white font-semibold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                class="px-2.5 py-1 rounded-md transition duration-150">
+                全部
+              </button>
+              <button 
+                v-for="catTag in availableDocCategories" 
+                :key="catTag"
+                @click="setDocCategoryFilter(catTag)"
+                :class="filters.docCategory === catTag ? 'bg-red-600 text-white font-semibold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                class="px-2.5 py-1 rounded-md transition duration-150">
+                {{ catTag }}
+              </button>
+            </div>
           </div>
 
           <!-- 文档列表卡片与批量操作 -->
@@ -327,13 +354,28 @@
                     <td class="px-4 py-3.5">
                       <div class="font-medium text-slate-900 flex items-center flex-wrap gap-1.5">
                         <i :class="getDocIcon(doc.docType)" class="mr-1 text-base flex-shrink-0"></i>
-                        <span>{{ doc.name }}</span>
+                        <a 
+                          :href="'https://support.huawei.com/enterprise/zh/doc/' + doc.nid" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          class="hover:text-red-600 hover:underline transition-colors inline-flex items-center group cursor-pointer"
+                          :title="'点击在浏览器中打开官方文档页面: ' + doc.name">
+                          <span>{{ doc.name }}</span>
+                          <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"></i>
+                        </a>
                         <span v-if="doc.isNewVersion" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200/80 shadow-sm animate-pulse">
                           <i class="fa-solid fa-fire mr-1 text-rose-500 text-[10px]"></i>新版本
                         </span>
                       </div>
-                      <div class="text-xs text-slate-400 mt-0.5">
-                        编号: <code class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]">{{ doc.nid }}</code>
+                      <div class="text-xs text-slate-400 mt-1 flex items-center flex-wrap gap-2">
+                        <span>编号: <code class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]">{{ doc.nid }}</code></span>
+                        <span 
+                          v-if="doc.docCategory" 
+                          @click.stop="setDocCategoryFilter(doc.docCategory)" 
+                          class="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/70 cursor-pointer text-[11px] font-medium transition"
+                          :title="'点击按此分类筛选: ' + doc.docCategory">
+                          <i class="fa-solid fa-tag text-[9px] mr-1 text-blue-500"></i>{{ doc.docCategory }}
+                        </span>
                       </div>
                     </td>
 
@@ -604,29 +646,71 @@
               </div>
             </div>
 
-            <!-- 按指定产品线爬取操作条 -->
-            <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-4">
-              <div class="flex items-center space-x-3">
-                <span class="text-xs font-semibold text-slate-700">按产品线快速爬取:</span>
-                <select 
-                  v-model="selectedLineForCrawl" 
-                  class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
-                  <option value="">请选择产品线 (如交换机、路由器等)</option>
-                  <optgroup v-for="cat in categories" :key="cat.id" :label="cat.name">
-                    <option v-for="line in (cat.lines || [])" :key="line.id" :value="line.id">
-                      {{ cat.name }} > {{ line.name }}
-                    </option>
-                  </optgroup>
-                </select>
+            <!-- 按层级定向爬取操作卡片（支持大类、产品线、产品型号三级联动） -->
+            <div class="p-5 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center">
+                  <i class="fa-solid fa-filter mr-1.5 text-slate-500"></i>
+                  按层级定向快速爬取（大类 / 产品线 / 型号）
+                </span>
+                <span class="text-xs text-slate-400">
+                  只选大类将爬取该大类下全部产品线及型号；选到产品线则爬取该线全部型号；选到型号则精准爬取该型号。
+                </span>
               </div>
 
-              <button 
-                @click="startLineCrawl" 
-                :disabled="!selectedLineForCrawl || crawlerRunning"
-                class="px-4 py-1.5 bg-slate-900 hover:bg-black disabled:opacity-40 text-white rounded-lg text-xs font-semibold flex items-center shadow-sm transition">
-                <i class="fa-solid fa-play mr-1.5"></i>
-                开始爬取该产品线
-              </button>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <!-- 1. 产品大类 -->
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">1. 产品大类</label>
+                  <select 
+                    v-model="crawlerScope.categoryId" 
+                    @change="onCrawlerCategoryChange"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
+                    <option value="">全部大类 (请选择)</option>
+                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                  </select>
+                </div>
+
+                <!-- 2. 二级产品线 -->
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">2. 二级产品线</label>
+                  <select 
+                    v-model="crawlerScope.lineId" 
+                    @change="onCrawlerLineChange"
+                    :disabled="!crawlerLines.length"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50">
+                    <option value="">全部产品线 (可选)</option>
+                    <option v-for="line in crawlerLines" :key="line.id" :value="line.id">{{ line.name }}</option>
+                  </select>
+                </div>
+
+                <!-- 3. 产品系列 / 型号 -->
+                <div>
+                  <label class="block text-xs font-semibold text-slate-600 mb-1">3. 产品系列 / 型号</label>
+                  <select 
+                    v-model="crawlerScope.productId" 
+                    :disabled="!crawlerProducts.length"
+                    class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50">
+                    <option value="">全部型号 (可选)</option>
+                    <option v-for="prod in crawlerProducts" :key="prod.id" :value="prod.id">{{ prod.name }}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-200 gap-3">
+                <div class="text-xs text-slate-500">
+                  <span>当前爬取范围: </span>
+                  <strong class="text-slate-800 font-semibold">{{ crawlerTargetDesc }}</strong>
+                </div>
+
+                <button 
+                  @click="startScopedCrawl" 
+                  :disabled="!canStartScopedCrawl || crawlerRunning"
+                  class="px-5 py-2 bg-slate-900 hover:bg-black disabled:opacity-40 text-white rounded-lg text-xs font-semibold flex items-center shadow-sm transition">
+                  <i class="fa-solid fa-play mr-1.5 text-emerald-400"></i>
+                  {{ scopedCrawlButtonText }}
+                </button>
+              </div>
             </div>
 
             <!-- 爬虫实时进度条 -->
@@ -738,6 +822,34 @@
                 <p class="text-xs text-slate-400 mt-1">提示：在浏览器打开 support.huawei.com 按 F12 -> 复制请求中的 Cookie 粘贴至此即可。</p>
               </div>
 
+              <!-- 启动时自动同步分类树 -->
+              <div class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div class="text-xs font-semibold text-slate-700">启动时自动同步产品分类树</div>
+                  <div class="text-xs text-slate-400 mt-0.5">每次启动程序时，自动在后台从华为官网更新产品大类、产品线与型号数据。</div>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" v-model="configForm.autoSyncCategories" class="sr-only peer">
+                  <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
+                </label>
+              </div>
+
+              <!-- 手动同步产品分类树 -->
+              <div class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div class="text-xs font-semibold text-slate-700">手动全量同步产品分类树</div>
+                  <div class="text-xs text-slate-400 mt-0.5">若华为官网有新产品系列发布，可在此立即触发全量分类与型号树拉取。</div>
+                </div>
+                <button 
+                  type="button" 
+                  @click="triggerManualCategorySync"
+                  :disabled="categorySyncStatus.isSyncing"
+                  class="px-4 py-2 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center transition border border-slate-300 shadow-xs">
+                  <i class="fa-solid fa-arrows-rotate mr-1.5" :class="categorySyncStatus.isSyncing ? 'animate-spin text-red-600' : ''"></i>
+                  {{ categorySyncStatus.isSyncing ? '正在同步中...' : '立即同步分类树' }}
+                </button>
+              </div>
+
               <div class="pt-4">
                 <button 
                   @click="saveSettings" 
@@ -751,6 +863,71 @@
 
       </div>
     </main>
+
+    <!-- 首次冷启动全屏初始化弹窗 -->
+    <div 
+      v-if="categorySyncStatus.isSyncing && categorySyncStatus.isInitial" 
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md transition-all duration-300">
+      <div class="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-lg w-full p-8 mx-4 space-y-6 animate-scale-in">
+        
+        <!-- 头部动画与标题 -->
+        <div class="text-center space-y-3">
+          <div class="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner border border-red-100">
+            <i class="fa-solid fa-cloud-arrow-down text-3xl animate-bounce"></i>
+          </div>
+          <h3 class="text-xl font-bold text-slate-900 tracking-tight">
+            首次启动 · 正在同步官方产品分类树
+          </h3>
+          <p class="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
+            正在从华为官网实时建立产品大类、二级产品线与 2000+ 型号数据库，请稍候...
+          </p>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs font-semibold">
+            <span class="text-slate-700 flex items-center">
+              <i class="fa-solid fa-spinner animate-spin text-red-500 mr-1.5"></i>
+              {{ categorySyncStatus.currentLineName ? '正在收录: ' + categorySyncStatus.currentLineName : '正在连接华为官网...' }}
+            </span>
+            <span class="text-red-600 font-mono font-bold">
+              {{ categorySyncPercentage }}%
+            </span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden shadow-inner p-0.5 border border-slate-200">
+            <div 
+              class="bg-gradient-to-r from-red-500 via-rose-500 to-red-600 h-full rounded-full transition-all duration-300 shadow-sm"
+              :style="{ width: categorySyncPercentage + '%' }">
+            </div>
+          </div>
+        </div>
+
+        <!-- 实时数据看板 -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 text-center">
+            <div class="text-[11px] text-slate-400 font-medium">产品线处理进度</div>
+            <div class="text-base font-bold text-slate-800 mt-1 font-mono">
+              {{ categorySyncStatus.currentLine }} / {{ categorySyncStatus.totalLines || 60 }}
+            </div>
+          </div>
+          <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 text-center">
+            <div class="text-[11px] text-slate-400 font-medium">已收录产品型号</div>
+            <div class="text-base font-bold text-red-600 mt-1 font-mono">
+              {{ categorySyncStatus.totalProducts }} 个
+            </div>
+          </div>
+        </div>
+
+        <!-- 底部温馨提示 -->
+        <div class="p-3 bg-amber-50 rounded-xl border border-amber-100/80 flex items-start space-x-2.5 text-xs text-amber-800">
+          <i class="fa-solid fa-lightbulb text-amber-500 mt-0.5 text-sm flex-shrink-0"></i>
+          <span class="leading-relaxed">
+            首次同步约耗时 5~10 秒，完成后将自动进入文档中心，无需刷新页面。
+          </span>
+        </div>
+
+      </div>
+    </div>
 
     <!-- 全局轻提示 Toast -->
     <div 
@@ -776,10 +953,23 @@
         const lastScanResult = ref(null);
 
         // 爬虫控制与日志
-        const selectedLineForCrawl = ref('');
+        const crawlerScope = ref({ categoryId: '', lineId: '', productId: '' });
+        const crawlerLines = ref([]);
+        const crawlerProducts = ref([]);
         const crawlerLogs = ref([]);
         const crawlerProgress = ref({ current: 0, total: 0, item: '' });
         const logContainer = ref(null);
+
+        // 分类树同步状态
+        const categorySyncStatus = ref({
+          isSyncing: false,
+          isInitial: false,
+          currentLine: 0,
+          totalLines: 0,
+          currentLineName: '',
+          totalProducts: 0,
+          totalCategories: 0
+        });
 
         // 统计数据
         const stats = ref({ categories: 0, lines: 0, products: 0, documents: 0, downloaded: 0, tasks: 0 });
@@ -798,16 +988,24 @@
           versionId: '',
           subModelId: '',
           docType: 'ALL',
+          docCategory: 'ALL',
           isDownloaded: '',
           keyword: ''
         });
+
+        const availableDocCategories = ref([
+          '产品文档包', '资料书架', '方案概述', '特性描述', '产品概述',
+          '版本说明书', '补丁说明书', '快速入门', '硬件安装指南', '配置指南',
+          '技术指导', '故障处理', '告警处理', '维护宝典', '通信矩阵',
+          '日志参考', '命令参考', 'MIB参考', 'API参考', '开发指南', '培训多媒体'
+        ]);
 
         const docPagination = ref({ page: 1, pageSize: 20, total: 0 });
 
         // 下载任务与配置
         const downloadTasks = ref([]);
-        const config = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '' });
-        const configForm = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '' });
+        const config = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '', autoSyncCategories: true });
+        const configForm = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '', autoSyncCategories: true });
 
         // Toast
         const toast = ref({ show: false, message: '', type: 'success' });
@@ -835,6 +1033,50 @@
           return docList.value.length > 0 && docList.value.every(d => selectedNIDs.value.includes(d.nid));
         });
 
+        const categorySyncPercentage = computed(() => {
+          if (!categorySyncStatus.value.totalLines || categorySyncStatus.value.totalLines === 0) {
+            return categorySyncStatus.value.isSyncing ? 5 : 0;
+          }
+          const p = Math.round((categorySyncStatus.value.currentLine / categorySyncStatus.value.totalLines) * 100);
+          return Math.min(Math.max(p, 5), 100);
+        });
+
+        const canStartScopedCrawl = computed(() => {
+          return !!(crawlerScope.value.categoryId || crawlerScope.value.lineId || crawlerScope.value.productId);
+        });
+
+        const crawlerTargetDesc = computed(() => {
+          if (crawlerScope.value.productId) {
+            const p = crawlerProducts.value.find(x => x.id === crawlerScope.value.productId);
+            return `单个型号【${p ? p.name : crawlerScope.value.productId}】`;
+          }
+          if (crawlerScope.value.lineId) {
+            const l = crawlerLines.value.find(x => x.id === crawlerScope.value.lineId);
+            return `产品线【${l ? l.name : crawlerScope.value.lineId}】下所有型号`;
+          }
+          if (crawlerScope.value.categoryId) {
+            const c = categories.value.find(x => x.id === crawlerScope.value.categoryId);
+            return `大类【${c ? c.name : crawlerScope.value.categoryId}】下所有产品线及型号`;
+          }
+          return '请在上方选择大类、产品线或型号';
+        });
+
+        const scopedCrawlButtonText = computed(() => {
+          if (crawlerScope.value.productId) {
+            const p = crawlerProducts.value.find(x => x.id === crawlerScope.value.productId);
+            return `开始爬取型号: ${p ? p.name : ''}`;
+          }
+          if (crawlerScope.value.lineId) {
+            const l = crawlerLines.value.find(x => x.id === crawlerScope.value.lineId);
+            return `开始爬取产品线: ${l ? l.name : ''}`;
+          }
+          if (crawlerScope.value.categoryId) {
+            const c = categories.value.find(x => x.id === crawlerScope.value.categoryId);
+            return `开始爬取大类: ${c ? c.name : ''}`;
+          }
+          return '请选择定向爬取范围';
+        });
+
         // ---------------- API 请求 ----------------
         const fetchCategories = async () => {
           try {
@@ -847,17 +1089,33 @@
           }
         };
 
+        const fetchDocCategories = async () => {
+          try {
+            const params = new URLSearchParams();
+            if (filters.value.productId) params.append('productId', filters.value.productId);
+            if (filters.value.productLineId) params.append('lineId', filters.value.productLineId);
+            const res = await fetch(`/api/doc-categories?${params.toString()}`).then(r => r.json());
+            if (res.code === 0 && res.data && res.data.length > 0) {
+              const set = new Set([...res.data, ...availableDocCategories.value]);
+              availableDocCategories.value = Array.from(set);
+            }
+          } catch (e) {}
+        };
+
         const onCategoryChange = () => {
           const cat = categories.value.find(c => c.id === filters.value.categoryId);
           currentProductLines.value = cat ? (cat.lines || []) : [];
           filters.value.productLineId = '';
           filters.value.productId = '';
+          filters.value.docCategory = 'ALL';
           products.value = [];
+          fetchDocCategories();
           loadDocuments();
         };
 
         const onProductLineChange = async () => {
           filters.value.productId = '';
+          filters.value.docCategory = 'ALL';
           products.value = [];
           if (filters.value.productLineId) {
             try {
@@ -869,15 +1127,24 @@
               console.error(e);
             }
           }
+          fetchDocCategories();
           loadDocuments();
         };
 
         const onProductChange = () => {
+          fetchDocCategories();
           loadDocuments();
         };
 
         const setDocTypeFilter = (type) => {
           filters.value.docType = type;
+          docPagination.value.page = 1;
+          loadDocuments();
+        };
+
+        const setDocCategoryFilter = (catTag) => {
+          filters.value.docCategory = catTag;
+          docPagination.value.page = 1;
           loadDocuments();
         };
 
@@ -898,12 +1165,14 @@
             versionId: '',
             subModelId: '',
             docType: 'ALL',
+            docCategory: 'ALL',
             isDownloaded: '',
             keyword: ''
           };
           currentProductLines.value = [];
           products.value = [];
           docPagination.value.page = 1;
+          fetchDocCategories();
           loadDocuments();
         };
 
@@ -919,6 +1188,9 @@
               docType: filters.value.docType,
               keyword: filters.value.keyword
             });
+            if (filters.value.docCategory && filters.value.docCategory !== 'ALL') {
+              params.append('docCategory', filters.value.docCategory);
+            }
             if (filters.value.isDownloaded !== '') {
               params.append('isDownloaded', filters.value.isDownloaded);
             }
@@ -1056,22 +1328,49 @@
           }
         };
 
-        const startLineCrawl = async () => {
-          if (!selectedLineForCrawl.value) return;
+        const onCrawlerCategoryChange = () => {
+          const cat = categories.value.find(c => c.id === crawlerScope.value.categoryId);
+          crawlerLines.value = cat ? (cat.lines || []) : [];
+          crawlerScope.value.lineId = '';
+          crawlerScope.value.productId = '';
+          crawlerProducts.value = [];
+        };
+
+        const onCrawlerLineChange = async () => {
+          crawlerScope.value.productId = '';
+          crawlerProducts.value = [];
+          if (crawlerScope.value.lineId) {
+            try {
+              const res = await fetch(`/api/products?lineId=${crawlerScope.value.lineId}`).then(r => r.json());
+              if (res.code === 0) {
+                crawlerProducts.value = res.data || [];
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          }
+        };
+
+        const startScopedCrawl = async () => {
+          if (!canStartScopedCrawl.value) return;
           try {
             const res = await fetch('/api/crawl/start', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ lineId: selectedLineForCrawl.value })
+              body: JSON.stringify({
+                categoryId: crawlerScope.value.categoryId,
+                lineId: crawlerScope.value.lineId,
+                productId: crawlerScope.value.productId
+              })
             }).then(r => r.json());
             if (res.code === 0) {
               crawlerRunning.value = true;
-              showToast('已启动指定产品线深度爬取！');
+              showToast(`已启动 ${crawlerTargetDesc.value} 定向爬取任务！`);
             } else {
               showToast(res.message, 'error');
             }
           } catch (e) {
-            showToast('启动产品线爬虫失败: ' + e.message, 'error');
+            showToast('启动定向爬取失败: ' + e.message, 'error');
           }
         };
 
@@ -1193,6 +1492,16 @@
                 fetchStats();
                 fetchCategories();
                 loadDocuments();
+              } else if (msg.type === 'CATEGORY_SYNC_PROGRESS' && msg.data) {
+                categorySyncStatus.value = msg.data;
+              } else if (msg.type === 'CATEGORY_SYNC_FINISHED') {
+                const data = msg.data || {};
+                categorySyncStatus.value.isSyncing = false;
+                showToast(`🎉 产品分类树同步完成！共收录 ${data.totalCategories || 12} 个大类，${data.totalLines || 60} 条产品线，${data.totalProducts || 2000} 个产品型号`);
+                fetchCategories();
+                fetchDocCategories();
+                fetchStats();
+                loadDocuments();
               }
             } catch (err) {
               console.error(err);
@@ -1265,6 +1574,30 @@
           return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         };
 
+        const checkCategorySyncStatus = async () => {
+          try {
+            const res = await fetch('/api/category-sync/status').then(r => r.json());
+            if (res.code === 0 && res.data) {
+              categorySyncStatus.value = res.data;
+            }
+          } catch (e) {}
+        };
+
+        const triggerManualCategorySync = async () => {
+          try {
+            const res = await fetch('/api/category-sync/start', { method: 'POST' }).then(r => r.json());
+            if (res.code === 0) {
+              categorySyncStatus.value.isSyncing = true;
+              categorySyncStatus.value.isInitial = false;
+              showToast('已开始从华为官网同步产品分类树...');
+            } else {
+              showToast(res.message, 'error');
+            }
+          } catch (e) {
+            showToast('触发同步失败: ' + e.message, 'error');
+          }
+        };
+
         const checkCrawlStatus = async () => {
           try {
             const res = await fetch('/api/crawl/status').then(r => r.json());
@@ -1278,10 +1611,12 @@
           await loadSettings();
           await fetchStats();
           await fetchCategories();
+          await checkCategorySyncStatus();
           await loadDocuments();
           await loadTasks();
           await checkCrawlStatus();
           setInterval(checkCrawlStatus, 4000);
+          setInterval(checkCategorySyncStatus, 3000);
           initWebSocket();
         });
 
@@ -1292,7 +1627,15 @@
           scanning,
           crawlerRunning,
           loadingDocs,
-          selectedLineForCrawl,
+          categorySyncStatus,
+          categorySyncPercentage,
+          triggerManualCategorySync,
+          crawlerScope,
+          crawlerLines,
+          crawlerProducts,
+          canStartScopedCrawl,
+          crawlerTargetDesc,
+          scopedCrawlButtonText,
           crawlerLogs,
           crawlerProgress,
           logContainer,
@@ -1314,7 +1657,11 @@
           onCategoryChange,
           onProductLineChange,
           onProductChange,
+          onCrawlerCategoryChange,
+          onCrawlerLineChange,
           setDocTypeFilter,
+          availableDocCategories,
+          setDocCategoryFilter,
           debounceSearch,
           resetFilters,
           changePage,
@@ -1326,7 +1673,7 @@
           deleteTask,
           triggerScan,
           startFullCrawl,
-          startLineCrawl,
+          startScopedCrawl,
           stopCrawler,
           saveSettings,
           openLocalFolder,

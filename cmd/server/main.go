@@ -65,7 +65,26 @@ func main() {
 	downManager := downloader.NewDownloadManager(repo, docCrawler)
 	localScanner := scanner.NewLocalScanner(repo)
 
-	// 5. 自动扫描本地下载目录并打标已下载文档
+	// 5. 初始化 HTTP 服务与嵌入式 Web UI
+	handler := api.NewServerHandler(repo, catCrawler, docCrawler, crawlerEngine, downManager, localScanner)
+	staticFS := web.GetStaticFS()
+	router := api.SetupRouter(handler, staticFS)
+
+	// 6. 自动在后台同步产品大类、二级产品线与产品型号 (首次启动或设置开关开启时)
+	cats, _ := repo.GetAllCategories()
+	if cfg.AutoSyncCategories || len(cats) == 0 {
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			logger.Info("正在后台自动同步产品大类、二级产品线与型号数据...")
+			_ = catCrawler.SyncAllCategoriesAndProducts(func(st crawler.CategorySyncStatus) {
+				handler.BroadcastCategorySyncProgress(st)
+			}, func(st crawler.CategorySyncStatus) {
+				handler.BroadcastCategorySyncFinished(st)
+			})
+		}()
+	}
+
+	// 7. 自动扫描本地下载目录并打标已下载文档
 	if cfg.DownloadDir != "" {
 		go func() {
 			time.Sleep(1 * time.Second)
@@ -73,11 +92,6 @@ func main() {
 			localScanner.ScanDirectory(cfg.DownloadDir)
 		}()
 	}
-
-	// 6. 初始化 HTTP 服务与嵌入式 Web UI
-	handler := api.NewServerHandler(repo, catCrawler, docCrawler, crawlerEngine, downManager, localScanner)
-	staticFS := web.GetStaticFS()
-	router := api.SetupRouter(handler, staticFS)
 
 	serverAddr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
 	srv := &http.Server{

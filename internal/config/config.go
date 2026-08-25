@@ -10,12 +10,13 @@ import (
 )
 
 type Config struct {
-	Port           int    `json:"port"`
-	DownloadDir    string `json:"downloadDir"`
-	MaxConcurrent  int    `json:"maxConcurrent"`
-	RequestDelayMs int    `json:"requestDelayMs"`
-	CustomCookie   string `json:"customCookie"`
-	DBPath         string `json:"dbPath"`
+	Port               int    `json:"port"`
+	DownloadDir        string `json:"downloadDir"`
+	MaxConcurrent      int    `json:"maxConcurrent"`
+	RequestDelayMs     int    `json:"requestDelayMs"`
+	CustomCookie       string `json:"customCookie"`
+	AutoSyncCategories bool   `json:"autoSyncCategories"`
+	DBPath             string `json:"dbPath"`
 }
 
 var (
@@ -42,12 +43,13 @@ func InitConfig(repo *store.Repository) *Config {
 	}
 
 	cfg := &Config{
-		Port:           8088,
-		DownloadDir:    repo.GetSetting("download_dir", defaultDownloadDir),
-		MaxConcurrent:  getIntSetting(repo, "max_concurrent", 3),
-		RequestDelayMs: getIntSetting(repo, "request_delay_ms", 500),
-		CustomCookie:   repo.GetSetting("custom_cookie", ""),
-		DBPath:         dbPath,
+		Port:               8088,
+		DownloadDir:        repo.GetSetting("download_dir", defaultDownloadDir),
+		MaxConcurrent:      getIntSetting(repo, "max_concurrent", 3),
+		RequestDelayMs:     getIntSetting(repo, "request_delay_ms", 500),
+		CustomCookie:       repo.GetSetting("custom_cookie", ""),
+		AutoSyncCategories: getBoolSetting(repo, "auto_sync_categories", true),
+		DBPath:             dbPath,
 	}
 
 	GlobalConfig = cfg
@@ -65,13 +67,21 @@ func getIntSetting(repo *store.Repository, key string, defaultVal int) int {
 	return defaultVal
 }
 
+func getBoolSetting(repo *store.Repository, key string, defaultVal bool) bool {
+	str := repo.GetSetting(key, "")
+	if str == "" {
+		return defaultVal
+	}
+	return str == "1" || str == "true"
+}
+
 func GetConfig() *Config {
 	configLock.RLock()
-	defer configLock.RUnlock()
+	configLock.RUnlock()
 	return GlobalConfig
 }
 
-func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string) {
+func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool) {
 	configLock.Lock()
 	defer configLock.Unlock()
 
@@ -90,4 +100,11 @@ func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, del
 	}
 	GlobalConfig.CustomCookie = cookie
 	repo.SetSetting("custom_cookie", cookie)
+
+	GlobalConfig.AutoSyncCategories = autoSync
+	if autoSync {
+		repo.SetSetting("auto_sync_categories", "true")
+	} else {
+		repo.SetSetting("auto_sync_categories", "false")
+	}
 }

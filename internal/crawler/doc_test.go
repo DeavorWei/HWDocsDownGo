@@ -185,33 +185,39 @@ func TestStoreAndQueryWithNewFields(t *testing.T) {
 			ProductID:    "PID1",
 			ProductName:  "CE6800",
 			Name:         "CE6800 V300R025C00 产品文档(hdx)",
-			DocType:      "HDX",
-			PublishDate:  "2026-08-07",
-			PublishTime:  "2026-08-07 20:46:31",
-			IsNewVersion: true,
-			IsDownloaded: 0,
+			DocType:          "HDX",
+			DocCategory:      "产品文档包",
+			DocCategoryGroup: "文档合集",
+			PublishDate:      "2026-08-07",
+			PublishTime:      "2026-08-07 20:46:31",
+			IsNewVersion:     true,
+			IsDownloaded:     0,
 		},
 		{
-			NID:          "DOC002",
-			ProductID:    "PID1",
-			ProductName:  "CE6800",
-			Name:         "CE6800 V300R024C00 产品文档(hdx)",
-			DocType:      "HDX",
-			PublishDate:  "2026-08-06",
-			PublishTime:  "2026-08-06 17:20:53",
-			IsNewVersion: false,
-			IsDownloaded: 1,
+			NID:              "DOC002",
+			ProductID:        "PID1",
+			ProductName:      "CE6800",
+			Name:             "CE6800 V300R024C00 产品文档(hdx)",
+			DocType:          "HDX",
+			DocCategory:      "产品文档包",
+			DocCategoryGroup: "文档合集",
+			PublishDate:      "2026-08-06",
+			PublishTime:      "2026-08-06 17:20:53",
+			IsNewVersion:     false,
+			IsDownloaded:     1,
 		},
 		{
-			NID:          "DOC003",
-			ProductID:    "PID1",
-			ProductName:  "CE6800",
-			Name:         "（多媒体）CE6800 智能运维视频",
-			DocType:      "多媒体",
-			PublishDate:  "2026-08-01",
-			PublishTime:  "2026-08-01 10:00:00",
-			IsNewVersion: true,
-			IsDownloaded: 0,
+			NID:              "DOC003",
+			ProductID:        "PID1",
+			ProductName:      "CE6800",
+			Name:             "（多媒体）CE6800 智能运维视频",
+			DocType:          "多媒体",
+			DocCategory:      "方案概述",
+			DocCategoryGroup: "了解方案",
+			PublishDate:      "2026-08-01",
+			PublishTime:      "2026-08-01 10:00:00",
+			IsNewVersion:     true,
+			IsDownloaded:     0,
 		},
 	}
 
@@ -242,12 +248,40 @@ func TestStoreAndQueryWithNewFields(t *testing.T) {
 		t.Errorf("Expected 1 multimedia doc DOC003, got total %d", resMedia.Total)
 	}
 
-	// 3. Verify fields persisted
+	// 3. Filter by DocCategory "方案概述"
+	resCat, err := repo.QueryDocuments(store.DocFilterQuery{DocCategory: "方案概述", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("QueryDocuments for 方案概述 failed: %v", err)
+	}
+	if resCat.Total != 1 || resCat.Items[0].NID != "DOC003" {
+		t.Errorf("Expected 1 doc for 方案概述, got total %d", resCat.Total)
+	}
+
+	// 4. Keyword search matching DocCategory "产品文档包"
+	resKw, err := repo.QueryDocuments(store.DocFilterQuery{Keyword: "产品文档包", Page: 1, PageSize: 10})
+	if err != nil {
+		t.Fatalf("QueryDocuments by keyword failed: %v", err)
+	}
+	if resKw.Total != 2 {
+		t.Errorf("Expected 2 docs matching keyword 产品文档包, got %d", resKw.Total)
+	}
+
+	// 5. GetDocCategories distinct tags
+	cats, err := repo.GetDocCategories("PID1", "")
+	if err != nil {
+		t.Fatalf("GetDocCategories failed: %v", err)
+	}
+	if len(cats) != 2 {
+		t.Errorf("Expected 2 distinct doc categories, got %v", cats)
+	}
+
+	// 6. Verify fields persisted
 	doc1, err := repo.GetDocumentByNID("DOC001")
 	if err != nil {
 		t.Fatalf("GetDocumentByNID failed: %v", err)
 	}
-	if doc1.PublishDate != "2026-08-07" || !doc1.IsNewVersion {
-		t.Errorf("Doc1 fields mismatch: PublishDate=%q, IsNewVersion=%v", doc1.PublishDate, doc1.IsNewVersion)
+	if doc1.PublishDate != "2026-08-07" || !doc1.IsNewVersion || doc1.DocCategory != "产品文档包" {
+		t.Errorf("Doc1 fields mismatch: PublishDate=%q, IsNewVersion=%v, DocCategory=%q",
+			doc1.PublishDate, doc1.IsNewVersion, doc1.DocCategory)
 	}
 }
