@@ -60,7 +60,8 @@ func (r *Repository) UpsertDocuments(docs []Document) error {
 		DoUpdates: clause.AssignmentColumns([]string{
 			"product_name", "product_line_name", "category_name", "version_id", "version_name",
 			"sub_model_id", "sub_model_name", "name", "doc_type", "file_name", "file_size_bytes",
-			"file_size_str", "download_url", "part_no", "crawl_time", "updated_at",
+			"file_size_str", "download_url", "part_no", "publish_date", "publish_time",
+			"last_update_time", "is_new_version", "crawl_time", "updated_at",
 		}),
 	}).CreateInBatches(&docs, 200).Error
 }
@@ -145,7 +146,7 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 		query = query.Where("sub_model_id = ?", q.SubModelID)
 	}
 	if q.DocType != "" && strings.ToUpper(q.DocType) != "ALL" {
-		query = query.Where("doc_type = ?", strings.ToUpper(q.DocType))
+		query = query.Where("doc_type = ? OR UPPER(doc_type) = ?", q.DocType, strings.ToUpper(q.DocType))
 	}
 	if q.IsDownloaded != nil {
 		query = query.Where("is_downloaded = ?", *q.IsDownloaded)
@@ -169,7 +170,7 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	offset := (q.Page - 1) * q.PageSize
 
 	var docs []Document
-	err := query.Order("is_downloaded DESC, name ASC").Offset(offset).Limit(q.PageSize).Find(&docs).Error
+	err := query.Order("is_downloaded DESC, is_new_version DESC, publish_date DESC, name ASC").Offset(offset).Limit(q.PageSize).Find(&docs).Error
 	if err != nil {
 		return nil, err
 	}

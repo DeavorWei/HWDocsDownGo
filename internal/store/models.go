@@ -59,7 +59,7 @@ type Version struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// Document 产品文档（HDX / CHM / PDF / ZIP 等）
+// Document 产品文档（HDX / CHM / PDF / ZIP / 多媒体 等）
 type Document struct {
 	NID             string    `gorm:"primaryKey;column:nid" json:"nid"`
 	ProductID       string    `gorm:"column:product_id;index" json:"productId"`
@@ -71,12 +71,16 @@ type Document struct {
 	SubModelID      string    `gorm:"column:sub_model_id;index" json:"subModelId"`
 	SubModelName    string    `gorm:"column:sub_model_name" json:"subModelName"`
 	Name            string    `gorm:"column:name;index" json:"name"`
-	DocType         string    `gorm:"column:doc_type;index" json:"docType"` // HDX | CHM | PDF | ZIP | OTHER
+	DocType         string    `gorm:"column:doc_type;index" json:"docType"` // HDX | CHM | PDF | ZIP | 多媒体 | OTHER
 	FileName        string    `gorm:"column:file_name" json:"fileName"`
 	FileSizeBytes   int64     `gorm:"column:file_size_bytes" json:"fileSizeBytes"`
 	FileSizeStr     string    `gorm:"column:file_size_str" json:"fileSizeStr"`
 	DownloadURL     string    `gorm:"column:download_url" json:"downloadUrl"`
 	PartNo          string    `gorm:"column:part_no" json:"partNo"`
+	PublishDate     string    `gorm:"column:publish_date;index" json:"publishDate"`
+	PublishTime     string    `gorm:"column:publish_time" json:"publishTime"`
+	LastUpdateTime  string    `gorm:"column:last_update_time" json:"lastUpdateTime"`
+	IsNewVersion    bool      `gorm:"column:is_new_version;index" json:"isNewVersion"`
 	IsDownloaded    int       `gorm:"column:is_downloaded;default:0;index" json:"isDownloaded"` // 0: 未下载, 1: 已下载
 	LocalPath       string    `gorm:"column:local_path" json:"localPath"`
 	CrawlTime       time.Time `gorm:"column:crawl_time" json:"crawlTime"`

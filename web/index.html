@@ -213,7 +213,7 @@
               <!-- 格式类型 Tab -->
               <div class="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-lg">
                 <button 
-                  v-for="type in ['ALL', 'HDX', 'CHM', 'PDF', 'ZIP']" 
+                  v-for="type in ['ALL', 'HDX', 'CHM', 'PDF', 'ZIP', '多媒体']" 
                   :key="type"
                   @click="setDocTypeFilter(type)"
                   :class="filters.docType === type ? 'bg-white text-red-600 font-semibold shadow-sm' : 'text-slate-600 hover:text-slate-900'"
@@ -277,6 +277,7 @@
                     <th scope="col" class="p-4 w-10"></th>
                     <th scope="col" class="px-4 py-3 font-semibold text-slate-700">文档名称</th>
                     <th scope="col" class="px-4 py-3 font-semibold text-slate-700">格式</th>
+                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">更新日期</th>
                     <th scope="col" class="px-4 py-3 font-semibold text-slate-700">所属型号</th>
                     <th scope="col" class="px-4 py-3 font-semibold text-slate-700">文件大小</th>
                     <th scope="col" class="px-4 py-3 font-semibold text-slate-700">下载状态</th>
@@ -285,13 +286,13 @@
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                   <tr v-if="loadingDocs">
-                    <td colspan="7" class="py-12 text-center text-slate-400">
+                    <td colspan="8" class="py-12 text-center text-slate-400">
                       <i class="fa-solid fa-spinner animate-spin text-2xl mb-2 text-red-500"></i>
                       <p class="text-xs">加载文档列表中...</p>
                     </td>
                   </tr>
                   <tr v-else-if="docList.length === 0">
-                    <td colspan="7" class="py-16 text-center text-slate-400">
+                    <td colspan="8" class="py-16 text-center text-slate-400">
                       <i class="fa-solid fa-spider text-4xl mb-3 text-slate-300"></i>
                       <p class="text-base font-semibold text-slate-700">暂无产品文档数据</p>
                       <p class="text-xs text-slate-400 mt-1 max-w-md mx-auto">
@@ -322,11 +323,14 @@
                         class="rounded text-red-600 focus:ring-red-500 w-4 h-4">
                     </td>
 
-                    <!-- 文档名称与 NID -->
+                    <!-- 文档名称与 NID 以及新版本标签 -->
                     <td class="px-4 py-3.5">
-                      <div class="font-medium text-slate-900 flex items-center">
-                        <i :class="getDocIcon(doc.docType)" class="mr-2 text-base"></i>
+                      <div class="font-medium text-slate-900 flex items-center flex-wrap gap-1.5">
+                        <i :class="getDocIcon(doc.docType)" class="mr-1 text-base flex-shrink-0"></i>
                         <span>{{ doc.name }}</span>
+                        <span v-if="doc.isNewVersion" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200/80 shadow-sm animate-pulse">
+                          <i class="fa-solid fa-fire mr-1 text-rose-500 text-[10px]"></i>新版本
+                        </span>
                       </div>
                       <div class="text-xs text-slate-400 mt-0.5">
                         编号: <code class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]">{{ doc.nid }}</code>
@@ -340,6 +344,14 @@
                         class="px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
                         {{ doc.docType }}
                       </span>
+                    </td>
+
+                    <!-- 更新日期 -->
+                    <td class="px-4 py-3.5 text-xs text-slate-600">
+                      <div class="flex items-center font-mono text-slate-700" :title="'完整发布时间: ' + (doc.publishTime || doc.lastUpdateTime || '-')">
+                        <i class="fa-regular fa-calendar-days text-slate-400 mr-1.5 text-[11px]"></i>
+                        <span>{{ doc.publishDate || '-' }}</span>
+                      </div>
                     </td>
 
                     <!-- 所属型号 -->
@@ -356,9 +368,13 @@
                     <!-- 下载状态（已下载徽章高亮） -->
                     <td class="px-4 py-3.5">
                       <div v-if="doc.isDownloaded === 1" class="flex items-center space-x-1.5">
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-sm">
+                        <span v-if="doc.isNewVersion" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-sm">
                           <i class="fa-solid fa-circle-check text-emerald-600 mr-1 text-[10px]"></i>
-                          已下载
+                          已下载(最新)
+                        </span>
+                        <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
+                          <i class="fa-solid fa-check text-emerald-500 mr-1 text-[10px]"></i>
+                          已下载(旧版)
                         </span>
                       </div>
                       <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500">
@@ -1191,26 +1207,36 @@
 
         // ---------------- 样式与工具函数 ----------------
         const getDocTypeBadgeClass = (type) => {
-          switch ((type || '').toUpperCase()) {
+          const t = (type || '').toUpperCase();
+          switch (t) {
             case 'HDX':
               return 'bg-red-100 text-red-700 border border-red-200';
             case 'CHM':
               return 'bg-blue-100 text-blue-700 border border-blue-200';
             case 'PDF':
               return 'bg-amber-100 text-amber-700 border border-amber-200';
+            case 'ZIP':
+              return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
+            case '多媒体':
+              return 'bg-purple-100 text-purple-700 border border-purple-200';
             default:
               return 'bg-slate-100 text-slate-700 border border-slate-200';
           }
         };
 
         const getDocIcon = (type) => {
-          switch ((type || '').toUpperCase()) {
+          const t = (type || '').toUpperCase();
+          switch (t) {
             case 'HDX':
               return 'fa-solid fa-file-shield text-red-600';
             case 'CHM':
               return 'fa-solid fa-file-code text-blue-600';
             case 'PDF':
               return 'fa-solid fa-file-pdf text-amber-600';
+            case 'ZIP':
+              return 'fa-solid fa-file-zipper text-emerald-600';
+            case '多媒体':
+              return 'fa-solid fa-photo-film text-purple-600';
             default:
               return 'fa-solid fa-file-lines text-slate-500';
           }

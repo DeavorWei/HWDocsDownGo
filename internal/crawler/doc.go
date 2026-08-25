@@ -3,6 +3,7 @@ package crawler
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -84,9 +85,24 @@ func (d *DocCrawler) FetchDocFileInfo(nid string) (*DocFileInfoResult, error) {
 	}, nil
 }
 
-// ParseDocTypeFromName 根据文档标题自动识别文档格式
-func ParseDocTypeFromName(name string) string {
+// ParseDocType 根据文档标题及附加字段自动识别文档格式 (支持 HDX / CHM / PDF / ZIP / 多媒体 / OTHER)
+func ParseDocType(name string, fv map[string]interface{}) string {
 	lower := strings.ToLower(name)
+
+	// 1. 优先判定多媒体格式
+	if strings.Contains(name, "多媒体") || strings.Contains(name, "视频") {
+		return "多媒体"
+	}
+	if fv != nil {
+		if isVideo, ok := fv["isVideo"].(string); ok && isVideo == "EBOOL-true" {
+			return "多媒体"
+		}
+		if secItem, ok := fv["secondItem"].(string); ok && secItem == "SEDPTNEW-STMV" {
+			return "多媒体"
+		}
+	}
+
+	// 2. 判定标准文档包格式
 	if strings.Contains(lower, "(hdx)") || strings.Contains(lower, "hdx") {
 		return "HDX"
 	}
@@ -100,6 +116,28 @@ func ParseDocTypeFromName(name string) string {
 		return "ZIP"
 	}
 	return "OTHER"
+}
+
+// ParseDocTypeFromName 根据文档标题自动识别文档格式 (兼容旧调用)
+func ParseDocTypeFromName(name string) string {
+	return ParseDocType(name, nil)
+}
+
+// ExtractPublishDate 提取 YYYY-MM-DD 格式的发布/更新日期
+func ExtractPublishDate(pubTime, updTime string) string {
+	str := pubTime
+	if str == "" {
+		str = updTime
+	}
+	str = strings.TrimSpace(str)
+	if len(str) >= 10 {
+		datePart := str[:10]
+		// 校验格式是否符合 2006-01-02
+		if _, err := time.Parse("2006-01-02", datePart); err == nil {
+			return datePart
+		}
+	}
+	return ""
 }
 
 // FormatBytes 把字节数格式化为人性化字符串
@@ -140,11 +178,19 @@ func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, p
 		return nil
 	}
 
-	docType := ParseDocTypeFromName(name)
+	publishTime, _ := item["publishTime"].(string)
+	lastUpdateTime, _ := item["lastUpdateTime"].(string)
+	versionName, _ := item["versionName"].(string)
+	versionID, _ := item["versionId"].(string)
+
+	fv, _ := item["fieldValues"].(map[string]interface{})
+	docType := ParseDocType(name, fv)
+	publishDate := ExtractPublishDate(publishTime, lastUpdateTime)
+
 	var fileSizeBytes int64
 	var fileName string
 
-	if fv, ok := item["fieldValues"].(map[string]interface{}); ok {
+	if fv != nil {
 		if entityStr, ok := fv["contentEntityListStr"].(string); ok && entityStr != "" {
 			var entities []map[string]interface{}
 			if err := json.Unmarshal([]byte(entityStr), &entities); err == nil && len(entities) > 0 {
@@ -159,7 +205,12 @@ func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, p
 	}
 
 	if fileName == "" {
-		fileName = name + "." + strings.ToLower(docType)
+		ext := strings.ToLower(docType)
+		if ext == "多媒体" || ext == "other" {
+			fileName = name
+		} else {
+			fileName = name + "." + ext
+		}
 	}
 	fileSizeStr := FormatBytes(fileSizeBytes)
 
@@ -170,14 +221,78 @@ func ParseDocItemFromJSON(item map[string]interface{}, productID, productName, p
 		ProductName:     productName,
 		ProductLineName: productLineName,
 		CategoryName:    categoryName,
+		VersionID:       versionID,
+		VersionName:     versionName,
 		Name:            name,
 		DocType:         docType,
 		FileName:        fileName,
 		FileSizeBytes:   fileSizeBytes,
 		FileSizeStr:     fileSizeStr,
+		PublishDate:     publishDate,
+		PublishTime:     publishTime,
+		LastUpdateTime:  lastUpdateTime,
+		IsNewVersion:    false, // 稍后在 MarkNewVersions 中统筹计算
 		CrawlTime:       now,
 		CreatedAt:       now,
 		UpdatedAt:       now,
+	}
+}
+
+// BaseDocGroupKey 计算文档同属系列/手册的基准 Key，用于识别跨版本的同一份文档
+func BaseDocGroupKey(name, docType string) string {
+	// 去除格式标记 (如 (hdx), (chm), (pdf), (多媒体), （多媒体）)
+	clean := regexp.MustCompile(`(?i)\s*[\(（](?:hdx|chm|pdf|zip|多媒体)[\)）]`).ReplaceAllString(name, "")
+	clean = regexp.MustCompile(`(?i)\s*[\(（]多媒体[\)）]`).ReplaceAllString(clean, "")
+
+	// 去除 V/R/C/B 版本号部分 (如 V300R025C00, V300R024C10, C11, V200R005SPH019 等)
+	vPattern := regexp.MustCompile(`(?i)\s*V\d{3}R\d{3}(?:[,\s]*[CB]\d+)*(?:SP[HC]\d+)?`)
+	clean = vPattern.ReplaceAllString(clean, "")
+
+	// 去除多余空格
+	clean = strings.Join(strings.Fields(clean), " ")
+	return strings.TrimSpace(clean) + "::" + docType
+}
+
+// MarkNewVersions 对文档集合进行版本系列分组，并根据发布日期与版本号标记最新版本
+func MarkNewVersions(docs []store.Document) {
+	if len(docs) == 0 {
+		return
+	}
+
+	// 1. 按照基准 Key 分组
+	groups := make(map[string][]*store.Document)
+	for i := range docs {
+		key := BaseDocGroupKey(docs[i].Name, docs[i].DocType)
+		groups[key] = append(groups[key], &docs[i])
+	}
+
+	// 2. 针对每组，对比发布时间并打标
+	for _, groupDocs := range groups {
+		if len(groupDocs) == 1 {
+			groupDocs[0].IsNewVersion = true
+			continue
+		}
+
+		var latestDate string
+		var latestTime string
+		for _, d := range groupDocs {
+			pDate := d.PublishDate
+			pTime := d.PublishTime
+			if pDate > latestDate {
+				latestDate = pDate
+				latestTime = pTime
+			} else if pDate == latestDate && pTime > latestTime {
+				latestTime = pTime
+			}
+		}
+
+		for _, d := range groupDocs {
+			if latestDate != "" && d.PublishDate == latestDate {
+				d.IsNewVersion = true
+			} else {
+				d.IsNewVersion = false
+			}
+		}
 	}
 }
 
@@ -255,7 +370,7 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 		findDocs(dItem)
 	}
 
-	// 3. 转换为标准 Document 结构并去重入库
+	// 3. 转换为标准 Document 结构并去重
 	var docs []store.Document
 	seenNID := make(map[string]bool)
 
@@ -267,9 +382,13 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 		}
 	}
 
+	// 4. 对同一产品的所有文档进行新旧版本标记
+	MarkNewVersions(docs)
+
+	// 5. 批量入库
 	if len(docs) > 0 {
 		d.repo.UpsertDocuments(docs)
-		logger.Info("🎉 成功解析并入库产品文档",
+		logger.Info("🎉 成功解析、识别新旧版本并入库产品文档",
 			zap.String("product", product.Name),
 			zap.Int("docCount", len(docs)),
 		)

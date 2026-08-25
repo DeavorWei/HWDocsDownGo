@@ -27,9 +27,11 @@ type ScanResult struct {
 }
 
 type Doc struct {
-	NID       string `json:"nid"`
-	Name      string `json:"name"`
-	LocalPath string `json:"localPath"`
+	NID          string `json:"nid"`
+	Name         string `json:"name"`
+	LocalPath    string `json:"localPath"`
+	PublishDate  string `json:"publishDate"`
+	IsNewVersion bool   `json:"isNewVersion"`
 }
 
 // ScanDirectory 扫描指定目录并自动打标已下载文档
@@ -76,7 +78,13 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 			// 规则 1: 文件名中包含精确的 NID (例如 EDOC1100512860)
 			if strings.Contains(strings.ToUpper(fileName), strings.ToUpper(d.NID)) {
 				matchedMap[d.NID] = path
-				updatedDocs = append(updatedDocs, Doc{NID: d.NID, Name: d.Name, LocalPath: path})
+				updatedDocs = append(updatedDocs, Doc{
+					NID:          d.NID,
+					Name:         d.Name,
+					LocalPath:    path,
+					PublishDate:  d.PublishDate,
+					IsNewVersion: d.IsNewVersion,
+				})
 				break
 			}
 
@@ -88,7 +96,13 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 				baseWithoutExt == normDocName || baseWithoutExt == normDocFileName ||
 				strings.Contains(normFileName, normDocName) || strings.Contains(normDocName, baseWithoutExt) {
 				matchedMap[d.NID] = path
-				updatedDocs = append(updatedDocs, Doc{NID: d.NID, Name: d.Name, LocalPath: path})
+				updatedDocs = append(updatedDocs, Doc{
+					NID:          d.NID,
+					Name:         d.Name,
+					LocalPath:    path,
+					PublishDate:  d.PublishDate,
+					IsNewVersion: d.IsNewVersion,
+				})
 				break
 			}
 		}
