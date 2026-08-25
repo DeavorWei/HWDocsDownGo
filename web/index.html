@@ -1,1797 +1,2506 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>华为产品文档下载管理器 - HWDocsDownGo</title>
-  <!-- 引入 Vue 3 与 Tailwind CSS -->
-  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    body {
-      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
-    }
-    .custom-scrollbar::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-track {
-      background: #f1f5f9;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 4px;
-    }
-    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8;
-    }
-    [v-cloak] { display: none; }
-  </style>
-</head>
-<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
-  <div id="app" v-cloak class="flex h-screen overflow-hidden">
-    
-    <!-- 侧边栏 -->
-    <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 border-r border-slate-800">
-      <!-- 品牌 Logo -->
-      <div class="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/40">
-        <div class="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center text-white font-bold mr-3 shadow-lg shadow-red-600/30">
-          <i class="fa-solid fa-cloud-arrow-down text-sm"></i>
-        </div>
-        <div>
-          <h1 class="font-bold text-white tracking-wide text-sm">华为文档下载器</h1>
-          <p class="text-xs text-slate-400">HWDocsDownGo v1.0</p>
-        </div>
-      </div>
-
-      <!-- 导航菜单 -->
-      <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar">
-        <button 
-          @click="activeTab = 'docs'"
-          :class="activeTab === 'docs' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
-          class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group">
-          <i class="fa-solid fa-book-open w-5 text-center mr-3" :class="activeTab === 'docs' ? 'text-white' : 'text-slate-400 group-hover:text-white'"></i>
-          <span>文档中心</span>
-          <span v-if="stats.documents" class="ml-auto text-xs px-2 py-0.5 rounded-full" :class="activeTab === 'docs' ? 'bg-red-700 text-red-100' : 'bg-slate-800 text-slate-400'">
-            {{ stats.documents }}
-          </span>
-        </button>
-
-        <button 
-          @click="activeTab = 'downloads'"
-          :class="activeTab === 'downloads' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
-          class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group">
-          <i class="fa-solid fa-download w-5 text-center mr-3" :class="activeTab === 'downloads' ? 'text-white' : 'text-slate-400 group-hover:text-white'"></i>
-          <span>下载管理</span>
-          <span v-if="activeDownloadCount > 0" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-500 text-white animate-pulse">
-            {{ activeDownloadCount }}
-          </span>
-        </button>
-
-        <button 
-          @click="activeTab = 'scanner'"
-          :class="activeTab === 'scanner' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
-          class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group">
-          <i class="fa-solid fa-folder-tree w-5 text-center mr-3" :class="activeTab === 'scanner' ? 'text-white' : 'text-slate-400 group-hover:text-white'"></i>
-          <span>本地文档库</span>
-          <span v-if="stats.downloaded" class="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/50">
-            {{ stats.downloaded }}
-          </span>
-        </button>
-
-        <button 
-          @click="activeTab = 'crawler'"
-          :class="activeTab === 'crawler' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
-          class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group">
-          <i class="fa-solid fa-spider w-5 text-center mr-3" :class="activeTab === 'crawler' ? 'text-white' : 'text-slate-400 group-hover:text-white'"></i>
-          <span>官网爬虫中心</span>
-          <span v-if="crawlerRunning" class="ml-auto w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-        </button>
-
-        <button 
-          @click="activeTab = 'settings'"
-          :class="activeTab === 'settings' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
-          class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group">
-          <i class="fa-solid fa-gear w-5 text-center mr-3" :class="activeTab === 'settings' ? 'text-white' : 'text-slate-400 group-hover:text-white'"></i>
-          <span>系统设置</span>
-        </button>
-      </nav>
-
-      <!-- 底部状态栏 -->
-      <div class="p-4 border-t border-slate-800 bg-slate-950/20 text-xs text-slate-400 flex items-center justify-between">
-        <div class="flex items-center space-x-2">
-          <span class="w-2 h-2 rounded-full" :class="wsConnected ? 'bg-emerald-500' : 'bg-amber-500'"></span>
-          <span>{{ wsConnected ? '实时连接正常' : '重连中...' }}</span>
-        </div>
-        <button @click="triggerScan" title="快速扫描本地目录" class="text-slate-400 hover:text-white">
-          <i class="fa-solid fa-arrows-rotate" :class="scanning ? 'animate-spin text-emerald-400' : ''"></i>
-        </button>
-      </div>
-    </aside>
-
-    <!-- 主工作区 -->
-    <main class="flex-1 flex flex-col min-w-0 bg-slate-100 overflow-hidden">
-      <!-- 顶部通知栏 / 统计概览 -->
-      <header class="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between flex-shrink-0 shadow-sm">
-        <div class="flex items-center space-x-3">
-          <h2 class="text-lg font-bold text-slate-800">
-            {{ tabTitle }}
-          </h2>
-          <span v-if="activeTab === 'docs'" class="text-xs px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full font-medium border border-slate-200">
-            共 {{ docPagination.total }} 篇文档
-          </span>
-        </div>
-
-        <!-- 顶部快捷操作 -->
-        <div class="flex items-center space-x-4">
-          <div class="flex items-center space-x-6 text-sm">
-            <div class="flex items-center space-x-2 text-slate-600">
-              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-              <span>已下载: <strong class="text-slate-900 font-semibold">{{ stats.downloaded || 0 }}</strong></span>
-            </div>
-            <div class="flex items-center space-x-2 text-slate-600">
-              <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-              <span>下载中: <strong class="text-slate-900 font-semibold">{{ activeDownloadCount }}</strong></span>
-            </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>华为产品文档下载管理器 - HWDocsDownGo</title>
+    <!-- 引入 Vue 3 与 Tailwind CSS -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+      body {
+        font-family:
+          "Inter",
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          "PingFang SC",
+          "Microsoft YaHei",
+          sans-serif;
+      }
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: #f1f5f9;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8;
+      }
+      [v-cloak] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body
+    class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col"
+  >
+    <div id="app" v-cloak class="flex h-screen overflow-hidden">
+      <!-- 侧边栏 -->
+      <aside
+        class="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 border-r border-slate-800"
+      >
+        <!-- 品牌 Logo -->
+        <div
+          class="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/40"
+        >
+          <div
+            class="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center text-white font-bold mr-3 shadow-lg shadow-red-600/30"
+          >
+            <i class="fa-solid fa-cloud-arrow-down text-sm"></i>
           </div>
-          
-          <!-- 分类树后台同步指示器 -->
-          <div v-if="categorySyncStatus.isSyncing && !categorySyncStatus.isInitial" class="flex items-center space-x-2 px-3 py-1.5 bg-rose-50 border border-rose-200/80 rounded-full text-xs text-rose-700 font-medium animate-pulse shadow-xs">
-            <i class="fa-solid fa-arrows-rotate animate-spin text-rose-500 text-xs"></i>
-            <span>分类同步中: {{ categorySyncStatus.currentLineName || '正在连接' }} ({{ categorySyncStatus.currentLine }}/{{ categorySyncStatus.totalLines || 60 }})</span>
+          <div>
+            <h1 class="font-bold text-white tracking-wide text-sm">
+              华为文档下载器
+            </h1>
+            <p class="text-xs text-slate-400">HWDocsDownGo v1.0</p>
           </div>
+        </div>
 
-          <button 
+        <!-- 导航菜单 -->
+        <nav
+          class="flex-1 px-3 py-4 space-y-1 overflow-y-auto custom-scrollbar"
+        >
+          <button
+            @click="activeTab = 'crawler'"
+            :class="activeTab === 'crawler' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
+            class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group"
+          >
+            <i
+              class="fa-solid fa-spider w-5 text-center mr-3"
+              :class="activeTab === 'crawler' ? 'text-white' : 'text-slate-400 group-hover:text-white'"
+            ></i>
+            <span>爬虫中心</span>
+            <span
+              v-if="crawlerRunning"
+              class="ml-auto w-2 h-2 rounded-full bg-emerald-400 animate-ping"
+            ></span>
+          </button>
+
+          <button
+            @click="activeTab = 'docs'"
+            :class="activeTab === 'docs' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
+            class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group"
+          >
+            <i
+              class="fa-solid fa-book-open w-5 text-center mr-3"
+              :class="activeTab === 'docs' ? 'text-white' : 'text-slate-400 group-hover:text-white'"
+            ></i>
+            <span>文档中心</span>
+            <span
+              v-if="stats.documents"
+              class="ml-auto text-xs px-2 py-0.5 rounded-full"
+              :class="activeTab === 'docs' ? 'bg-red-700 text-red-100' : 'bg-slate-800 text-slate-400'"
+            >
+              {{ stats.documents }}
+            </span>
+          </button>
+
+          <button
+            @click="activeTab = 'downloads'"
+            :class="activeTab === 'downloads' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
+            class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group"
+          >
+            <i
+              class="fa-solid fa-download w-5 text-center mr-3"
+              :class="activeTab === 'downloads' ? 'text-white' : 'text-slate-400 group-hover:text-white'"
+            ></i>
+            <span>下载管理</span>
+            <span
+              v-if="activeDownloadCount > 0"
+              class="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-500 text-white animate-pulse"
+            >
+              {{ activeDownloadCount }}
+            </span>
+          </button>
+
+          <button
+            @click="activeTab = 'scanner'"
+            :class="activeTab === 'scanner' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
+            class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group"
+          >
+            <i
+              class="fa-solid fa-folder-tree w-5 text-center mr-3"
+              :class="activeTab === 'scanner' ? 'text-white' : 'text-slate-400 group-hover:text-white'"
+            ></i>
+            <span>本地文档库</span>
+            <span
+              v-if="stats.downloaded"
+              class="ml-auto text-xs px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-700/50"
+            >
+              {{ stats.downloaded }}
+            </span>
+          </button>
+
+          <button
+            @click="activeTab = 'settings'"
+            :class="activeTab === 'settings' ? 'bg-red-600 text-white font-medium shadow-md shadow-red-600/20' : 'hover:bg-slate-800 text-slate-300'"
+            class="w-full flex items-center px-3 py-2.5 rounded-lg text-sm transition-all duration-150 group"
+          >
+            <i
+              class="fa-solid fa-gear w-5 text-center mr-3"
+              :class="activeTab === 'settings' ? 'text-white' : 'text-slate-400 group-hover:text-white'"
+            ></i>
+            <span>系统设置</span>
+          </button>
+        </nav>
+
+        <!-- 底部状态栏 -->
+        <div
+          class="p-4 border-t border-slate-800 bg-slate-950/20 text-xs text-slate-400 flex items-center justify-between"
+        >
+          <div class="flex items-center space-x-2">
+            <span
+              class="w-2 h-2 rounded-full"
+              :class="wsConnected ? 'bg-emerald-500' : 'bg-amber-500'"
+            ></span>
+            <span>{{ wsConnected ? '实时连接正常' : '重连中...' }}</span>
+          </div>
+          <button
             @click="triggerScan"
-            :disabled="scanning"
-            class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium flex items-center transition border border-slate-300">
-            <i class="fa-solid fa-magnifying-glass mr-1.5" :class="scanning ? 'animate-spin text-blue-600' : ''"></i>
-            {{ scanning ? '正在扫描本地...' : '扫描本地目录' }}
+            title="快速扫描本地目录"
+            class="text-slate-400 hover:text-white"
+          >
+            <i
+              class="fa-solid fa-arrows-rotate"
+              :class="scanning ? 'animate-spin text-emerald-400' : ''"
+            ></i>
           </button>
         </div>
-      </header>
+      </aside>
 
-      <!-- 内容区 -->
-      <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
-
-        <!-- =================== TAB 1: 文档中心 =================== -->
-        <div v-if="activeTab === 'docs'" class="space-y-4">
-          <!-- 多级联动筛选卡片 -->
-          <div class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <!-- 1. 产品大类 -->
-              <div>
-                <label class="block text-xs font-medium text-slate-500 mb-1.5">产品大类</label>
-                <select 
-                  v-model="filters.categoryId" 
-                  @change="onCategoryChange"
-                  class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500">
-                  <option value="">全部大类</option>
-                  <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
-                </select>
-              </div>
-
-              <!-- 2. 二级产品线 -->
-              <div>
-                <label class="block text-xs font-medium text-slate-500 mb-1.5">二级产品线</label>
-                <select 
-                  v-model="filters.productLineId" 
-                  @change="onProductLineChange"
-                  :disabled="!currentProductLines.length"
-                  class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50">
-                  <option value="">全部产品线</option>
-                  <option v-for="line in currentProductLines" :key="line.id" :value="line.id">{{ line.name }}</option>
-                </select>
-              </div>
-
-              <!-- 3. 产品系列/型号 -->
-              <div>
-                <label class="block text-xs font-medium text-slate-500 mb-1.5">产品系列 / 型号</label>
-                <select 
-                  v-model="filters.productId" 
-                  @change="onProductChange"
-                  :disabled="!products.length"
-                  class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50">
-                  <option value="">全部型号</option>
-                  <option v-for="prod in products" :key="prod.id" :value="prod.id">{{ prod.name }}</option>
-                </select>
-              </div>
-
-              <!-- 4. 关键词搜索 -->
-              <div>
-                <label class="block text-xs font-medium text-slate-500 mb-1.5">关键词搜索</label>
-                <div class="relative">
-                  <input 
-                    type="text" 
-                    v-model="filters.keyword" 
-                    @input="debounceSearch"
-                    placeholder="输入文档名或型号搜索..."
-                    class="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500">
-                  <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"></i>
-                </div>
-              </div>
-            </div>
-
-            <!-- 快捷格式与状态切换栏 -->
-            <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 gap-3">
-              <!-- 格式类型 Tab -->
-              <div class="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-lg">
-                <button 
-                  v-for="type in ['ALL', 'HDX', 'CHM', 'PDF', 'ZIP', '多媒体']" 
-                  :key="type"
-                  @click="setDocTypeFilter(type)"
-                  :class="filters.docType === type ? 'bg-white text-red-600 font-semibold shadow-sm' : 'text-slate-600 hover:text-slate-900'"
-                  class="px-3 py-1 text-xs rounded-md transition duration-150">
-                  {{ type === 'ALL' ? '全部格式' : type }}
-                </button>
-              </div>
-
-              <!-- 下载状态过滤 -->
-              <div class="flex items-center space-x-2 text-xs">
-                <span class="text-slate-500">状态:</span>
-                <select 
-                  v-model="filters.isDownloaded" 
-                  @change="loadDocuments"
-                  class="bg-slate-50 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700">
-                  <option :value="''">全部状态</option>
-                  <option :value="1">仅显示已下载</option>
-                  <option :value="0">仅显示未下载</option>
-                </select>
-
-                <button 
-                  @click="resetFilters" 
-                  class="text-slate-500 hover:text-red-600 px-2 py-1 text-xs">
-                  重置筛选
-                </button>
-              </div>
-            </div>
-
-            <!-- 资料分类 / 标签过滤栏 (产品文档包、资料书架、方案概述、特性描述等) -->
-            <div class="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-100 text-xs">
-              <span class="text-slate-500 font-medium mr-1 flex items-center">
-                <i class="fa-solid fa-tags text-slate-400 mr-1.5"></i>资料分类:
-              </span>
-              <button 
-                @click="setDocCategoryFilter('ALL')"
-                :class="filters.docCategory === 'ALL' || !filters.docCategory ? 'bg-slate-900 text-white font-semibold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
-                class="px-2.5 py-1 rounded-md transition duration-150">
-                全部
-              </button>
-              <button 
-                v-for="catTag in availableDocCategories" 
-                :key="catTag"
-                @click="setDocCategoryFilter(catTag)"
-                :class="filters.docCategory === catTag ? 'bg-red-600 text-white font-semibold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
-                class="px-2.5 py-1 rounded-md transition duration-150">
-                {{ catTag }}
-              </button>
-            </div>
+      <!-- 主工作区 -->
+      <main class="flex-1 flex flex-col min-w-0 bg-slate-100 overflow-hidden">
+        <!-- 顶部通知栏 / 统计概览 -->
+        <header
+          class="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between flex-shrink-0 shadow-sm"
+        >
+          <div class="flex items-center space-x-3">
+            <h2 class="text-lg font-bold text-slate-800">{{ tabTitle }}</h2>
+            <span
+              v-if="activeTab === 'docs'"
+              class="text-xs px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full font-medium border border-slate-200"
+            >
+              共 {{ docPagination.total }} 篇文档
+            </span>
           </div>
 
-          <!-- 文档列表卡片与批量操作 -->
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <!-- 表格顶部批量操作栏 -->
-            <div class="px-6 py-3.5 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between">
-              <div class="flex items-center space-x-3">
-                <label class="flex items-center space-x-2 text-xs font-medium text-slate-600 cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    :checked="isAllSelected" 
-                    @change="toggleSelectAll"
-                    class="rounded text-red-600 focus:ring-red-500 w-4 h-4">
-                  <span>全选本页 ({{ selectedNIDs.length }} / {{ docList.length }})</span>
-                </label>
+          <!-- 顶部快捷操作 -->
+          <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-6 text-sm">
+              <div class="flex items-center space-x-2 text-slate-600">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span
+                  >已下载:
+                  <strong class="text-slate-900 font-semibold"
+                    >{{ stats.downloaded || 0 }}</strong
+                  ></span
+                >
               </div>
-
-              <div class="flex items-center space-x-3">
-                <button 
-                  @click="batchDownloadSelected" 
-                  :disabled="selectedNIDs.length === 0"
-                  class="px-4 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:hover:bg-red-600 text-white rounded-lg text-xs font-medium flex items-center shadow-sm transition">
-                  <i class="fa-solid fa-cloud-arrow-down mr-1.5"></i>
-                  批量下载选中项 ({{ selectedNIDs.length }})
-                </button>
+              <div class="flex items-center space-x-2 text-slate-600">
+                <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
+                <span
+                  >下载中:
+                  <strong class="text-slate-900 font-semibold"
+                    >{{ activeDownloadCount }}</strong
+                  ></span
+                >
               </div>
             </div>
 
-            <!-- 表格内容 -->
-            <div class="overflow-x-auto">
-              <table class="w-full text-left text-sm text-slate-600">
-                <thead class="bg-slate-50 text-xs text-slate-400 uppercase border-b border-slate-200">
-                  <tr>
-                    <th scope="col" class="p-4 w-10"></th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">文档名称</th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">格式</th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">更新日期</th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">所属型号</th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">文件大小</th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700">下载状态</th>
-                    <th scope="col" class="px-4 py-3 font-semibold text-slate-700 text-right">操作</th>
-                  </tr>
-                </thead>
-                <tbody class="divide-y divide-slate-100">
-                  <tr v-if="loadingDocs">
-                    <td colspan="8" class="py-12 text-center text-slate-400">
-                      <i class="fa-solid fa-spinner animate-spin text-2xl mb-2 text-red-500"></i>
-                      <p class="text-xs">加载文档列表中...</p>
-                    </td>
-                  </tr>
-                  <tr v-else-if="docList.length === 0">
-                    <td colspan="8" class="py-16 text-center text-slate-400">
-                      <i class="fa-solid fa-spider text-4xl mb-3 text-slate-300"></i>
-                      <p class="text-base font-semibold text-slate-700">暂无产品文档数据</p>
-                      <p class="text-xs text-slate-400 mt-1 max-w-md mx-auto">
-                        请点击下方按钮启动华为官网爬虫，自动爬取各产品线与型号的所有官方文档及下载直链。
-                      </p>
-                      <div class="mt-4">
-                        <button 
-                          @click="activeTab = 'crawler'" 
-                          class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm inline-flex items-center">
-                          <i class="fa-solid fa-rocket mr-1.5"></i>
-                          前往爬虫中心立即抓取
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr 
-                    v-else 
-                    v-for="doc in docList" 
-                    :key="doc.nid" 
-                    :class="selectedNIDs.includes(doc.nid) ? 'bg-red-50/40' : 'hover:bg-slate-50/80'"
-                    class="transition-colors">
-                    <!-- 复选框 -->
-                    <td class="p-4">
-                      <input 
-                        type="checkbox" 
-                        :value="doc.nid" 
-                        v-model="selectedNIDs"
-                        class="rounded text-red-600 focus:ring-red-500 w-4 h-4">
-                    </td>
-
-                    <!-- 文档名称与 NID 以及新版本标签 -->
-                    <td class="px-4 py-3.5">
-                      <div class="font-medium text-slate-900 flex items-center flex-wrap gap-1.5">
-                        <i :class="getDocIcon(doc.docType)" class="mr-1 text-base flex-shrink-0"></i>
-                        <a 
-                          :href="'https://support.huawei.com/enterprise/zh/doc/' + doc.nid" 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          class="hover:text-red-600 hover:underline transition-colors inline-flex items-center group cursor-pointer"
-                          :title="'点击在浏览器中打开官方文档页面: ' + doc.name">
-                          <span>{{ doc.name }}</span>
-                          <i class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                        </a>
-                        <span v-if="doc.isNewVersion" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200/80 shadow-sm animate-pulse">
-                          <i class="fa-solid fa-fire mr-1 text-rose-500 text-[10px]"></i>新版本
-                        </span>
-                      </div>
-                      <div class="text-xs text-slate-400 mt-1 flex items-center flex-wrap gap-2">
-                        <span>编号: <code class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]">{{ doc.nid }}</code></span>
-                        <span 
-                          v-if="doc.docCategory" 
-                          @click.stop="setDocCategoryFilter(doc.docCategory)" 
-                          class="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/70 cursor-pointer text-[11px] font-medium transition"
-                          :title="'点击按此分类筛选: ' + doc.docCategory">
-                          <i class="fa-solid fa-tag text-[9px] mr-1 text-blue-500"></i>{{ doc.docCategory }}
-                        </span>
-                      </div>
-                    </td>
-
-                    <!-- 格式徽章 -->
-                    <td class="px-4 py-3.5">
-                      <span 
-                        :class="getDocTypeBadgeClass(doc.docType)"
-                        class="px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide">
-                        {{ doc.docType }}
-                      </span>
-                    </td>
-
-                    <!-- 更新日期 -->
-                    <td class="px-4 py-3.5 text-xs text-slate-600">
-                      <div class="flex items-center font-mono text-slate-700" :title="'完整发布时间: ' + (doc.publishTime || doc.lastUpdateTime || '-')">
-                        <i class="fa-regular fa-calendar-days text-slate-400 mr-1.5 text-[11px]"></i>
-                        <span>{{ doc.publishDate || '-' }}</span>
-                      </div>
-                    </td>
-
-                    <!-- 所属型号 -->
-                    <td class="px-4 py-3.5 text-xs text-slate-600">
-                      <div>{{ doc.productName || '通用' }}</div>
-                      <div class="text-slate-400">{{ doc.productLineName }}</div>
-                    </td>
-
-                    <!-- 文件大小 -->
-                    <td class="px-4 py-3.5 text-xs font-mono text-slate-600">
-                      {{ doc.fileSizeStr || '-' }}
-                    </td>
-
-                    <!-- 下载状态（已下载徽章高亮） -->
-                    <td class="px-4 py-3.5">
-                      <div v-if="doc.isDownloaded === 1" class="flex items-center space-x-1.5">
-                        <span v-if="doc.isNewVersion" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-sm">
-                          <i class="fa-solid fa-circle-check text-emerald-600 mr-1 text-[10px]"></i>
-                          已下载(最新)
-                        </span>
-                        <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm">
-                          <i class="fa-solid fa-check text-emerald-500 mr-1 text-[10px]"></i>
-                          已下载(旧版)
-                        </span>
-                      </div>
-                      <span v-else class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500">
-                        未下载
-                      </span>
-                    </td>
-
-                    <!-- 操作 -->
-                    <td class="px-4 py-3.5 text-right space-x-2">
-                      <button 
-                        v-if="doc.isDownloaded === 1"
-                        @click="openLocalFolder(doc.localPath)"
-                        title="在文件夹中打开"
-                        class="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition">
-                        <i class="fa-regular fa-folder-open"></i>
-                      </button>
-
-                      <button 
-                        @click="startDownloadSingle(doc)"
-                        :class="doc.isDownloaded === 1 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-red-600 text-white hover:bg-red-700 shadow-sm shadow-red-500/20'"
-                        class="px-3 py-1 rounded-md text-xs font-medium inline-flex items-center transition">
-                        <i class="fa-solid fa-download mr-1"></i>
-                        {{ doc.isDownloaded === 1 ? '重新下载' : '下载' }}
-                      </button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <!-- 分类树后台同步指示器 -->
+            <div
+              v-if="categorySyncStatus.isSyncing && !categorySyncStatus.isInitial"
+              class="flex items-center space-x-2 px-3 py-1.5 bg-rose-50 border border-rose-200/80 rounded-full text-xs text-rose-700 font-medium animate-pulse shadow-xs"
+            >
+              <i
+                class="fa-solid fa-arrows-rotate animate-spin text-rose-500 text-xs"
+              ></i>
+              <span
+                >分类同步中: {{ categorySyncStatus.currentLineName || '正在连接'
+                }} ({{ categorySyncStatus.currentLine }}/{{
+                categorySyncStatus.totalLines || 60 }})</span
+              >
             </div>
 
-            <!-- 分页栏 -->
-            <div class="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500">
-              <div>
-                显示第 {{ (docPagination.page - 1) * docPagination.pageSize + 1 }} 到 {{ Math.min(docPagination.page * docPagination.pageSize, docPagination.total) }} 条，共 {{ docPagination.total }} 条
-              </div>
-              <div class="flex items-center space-x-2">
-                <button 
-                  @click="changePage(docPagination.page - 1)" 
-                  :disabled="docPagination.page <= 1"
-                  class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40">
-                  上一页
-                </button>
-                <span class="font-medium text-slate-700">第 {{ docPagination.page }} 页</span>
-                <button 
-                  @click="changePage(docPagination.page + 1)" 
-                  :disabled="docPagination.page * docPagination.pageSize >= docPagination.total"
-                  class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40">
-                  下一页
-                </button>
-              </div>
-            </div>
+            <button
+              @click="triggerScan"
+              :disabled="scanning"
+              class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium flex items-center transition border border-slate-300"
+            >
+              <i
+                class="fa-solid fa-magnifying-glass mr-1.5"
+                :class="scanning ? 'animate-spin text-blue-600' : ''"
+              ></i>
+              {{ scanning ? '正在扫描本地...' : '扫描本地目录' }}
+            </button>
           </div>
-        </div>
+        </header>
 
-        <!-- =================== TAB 2: 下载管理 =================== -->
-        <div v-if="activeTab === 'downloads'" class="space-y-4">
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="text-base font-bold text-slate-800">下载任务队列 ({{ downloadTasks.length }})</h3>
-              <div class="flex items-center space-x-2 text-xs">
-                <span class="text-slate-500">下载保存目录:</span>
-                <code class="bg-slate-100 text-slate-700 px-2 py-1 rounded font-mono">{{ config.downloadDir }}</code>
-                <button @click="openLocalFolder(config.downloadDir)" class="text-blue-600 hover:underline">打开目录</button>
-              </div>
-            </div>
-
-            <div v-if="downloadTasks.length === 0" class="py-16 text-center text-slate-400">
-              <i class="fa-solid fa-inbox text-4xl mb-3 text-slate-300"></i>
-              <p class="text-sm">暂无下载任务</p>
-              <p class="text-xs text-slate-400 mt-1">可在“文档中心”勾选并批量添加下载</p>
-            </div>
-
-            <div v-else class="space-y-3">
-              <div 
-                v-for="task in downloadTasks" 
-                :key="task.id" 
-                class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white transition shadow-sm space-y-3">
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center space-x-3">
-                    <span :class="getDocTypeBadgeClass(task.docType)" class="px-2 py-0.5 rounded text-xs font-bold">
-                      {{ task.docType || 'DOC' }}
-                    </span>
-                    <div>
-                      <h4 class="font-medium text-slate-900 text-sm">{{ task.docName }}</h4>
-                      <p class="text-xs text-slate-400 font-mono">{{ task.fileName || task.docNid }}</p>
-                    </div>
-                  </div>
-
-                  <!-- 状态与控制按钮 -->
-                  <div class="flex items-center space-x-3">
-                    <span 
-                      :class="getTaskStatusBadgeClass(task.status)"
-                      class="px-2.5 py-0.5 rounded-full text-xs font-semibold">
-                      {{ getTaskStatusStr(task.status) }}
-                    </span>
-
-                    <button 
-                      v-if="task.status === 1" 
-                      @click="pauseTask(task.id)" 
-                      title="暂停"
-                      class="p-1.5 text-slate-500 hover:text-amber-600 rounded">
-                      <i class="fa-solid fa-pause"></i>
-                    </button>
-                    <button 
-                      v-if="task.status === 4 || task.status === 3" 
-                      @click="resumeTask(task.id)" 
-                      title="继续/重试"
-                      class="p-1.5 text-slate-500 hover:text-emerald-600 rounded">
-                      <i class="fa-solid fa-play"></i>
-                    </button>
-                    <button 
-                      v-if="task.status === 2" 
-                      @click="openLocalFolder(task.savePath)" 
-                      title="定位文件"
-                      class="p-1.5 text-slate-500 hover:text-blue-600 rounded">
-                      <i class="fa-regular fa-folder-open"></i>
-                    </button>
-                    <button 
-                      @click="deleteTask(task.id)" 
-                      title="移除任务"
-                      class="p-1.5 text-slate-400 hover:text-red-600 rounded">
-                      <i class="fa-solid fa-trash-can"></i>
-                    </button>
-                  </div>
-                </div>
-
-                <!-- 进度条与速度 -->
-                <div class="space-y-1.5">
-                  <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div 
-                      class="h-2 rounded-full transition-all duration-300"
-                      :class="task.status === 2 ? 'bg-emerald-500' : task.status === 3 ? 'bg-red-500' : 'bg-red-600'"
-                      :style="{ width: (task.progress || 0) + '%' }">
-                    </div>
-                  </div>
-                  <div class="flex items-center justify-between text-xs text-slate-500 font-mono">
-                    <div>
-                      <span>{{ (task.progress || 0).toFixed(1) }}%</span>
-                      <span v-if="task.totalBytes > 0" class="ml-2">
-                        ({{ formatBytes(task.downloadedBytes) }} / {{ formatBytes(task.totalBytes) }})
-                      </span>
-                    </div>
-                    <div v-if="task.status === 1" class="text-red-600 font-semibold">
-                      <i class="fa-solid fa-bolt mr-1"></i>{{ task.speedStr || '0 KB/s' }}
-                    </div>
-                    <div v-else-if="task.status === 3" class="text-red-500">
-                      {{ task.errorMsg || '下载失败' }}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- =================== TAB 3: 本地文档库与扫描 =================== -->
-        <div v-if="activeTab === 'scanner'" class="space-y-4">
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6">
-            <div class="flex items-start justify-between">
-              <div>
-                <h3 class="text-base font-bold text-slate-800">本地文档智能扫描与打标</h3>
-                <p class="text-xs text-slate-500 mt-1">系统会自动递归遍历指定目录，识别已存在的 HDX/CHM/PDF/ZIP 文档，并在界面标记为【已下载】。</p>
-              </div>
-              <button 
-                @click="triggerScan" 
-                :disabled="scanning"
-                class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center shadow-sm shadow-emerald-600/30 transition">
-                <i class="fa-solid fa-radar mr-2" :class="scanning ? 'animate-spin' : ''"></i>
-                {{ scanning ? '扫描比对中...' : '立即扫描本地目录' }}
-              </button>
-            </div>
-
-            <!-- 扫描统计面板 -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
-                <div class="text-xs text-slate-500 mb-1">监控下载目录</div>
-                <div class="text-sm font-mono font-medium text-slate-800 truncate" :title="config.downloadDir">{{ config.downloadDir }}</div>
-              </div>
-              <div class="p-4 bg-emerald-50 rounded-xl border border-emerald-100">
-                <div class="text-xs text-emerald-600 mb-1">已匹配/已加载文档</div>
-                <div class="text-2xl font-bold text-emerald-700">{{ stats.downloaded || 0 }} 篇</div>
-              </div>
-              <div class="p-4 bg-blue-50 rounded-xl border border-blue-100">
-                <div class="text-xs text-blue-600 mb-1">文档总收录数</div>
-                <div class="text-2xl font-bold text-blue-700">{{ stats.documents || 0 }} 篇</div>
-              </div>
-            </div>
-
-            <!-- 最近扫描结果展示 -->
-            <div v-if="lastScanResult" class="border-t border-slate-100 pt-4 space-y-3">
-              <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">最近一次扫描报告</h4>
-              <div class="bg-slate-50 p-4 rounded-lg text-xs space-y-2 text-slate-600">
-                <p>📂 遍历本地文件总数: <strong class="text-slate-900">{{ lastScanResult.totalScannedFiles }}</strong></p>
-                <p>✅ 成功匹配并标记已下载文档: <strong class="text-emerald-600">{{ lastScanResult.matchedDocsCount }}</strong> 篇</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- =================== TAB 4: 官网爬虫中心 =================== -->
-        <div v-if="activeTab === 'crawler'" class="space-y-4">
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6">
-            <div class="flex items-start justify-between">
-              <div>
-                <h3 class="text-base font-bold text-slate-800">华为 Support 官网文档爬虫引擎</h3>
-                <p class="text-xs text-slate-500 mt-1">
-                  自动递归抓取华为官网全量 12 大类、63 条产品线、所有型号、版本树及官方文档（HDX / CHM / PDF 等）。
-                </p>
-              </div>
-
-              <!-- 运行控制按钮 -->
-              <div class="flex items-center space-x-3">
-                <button 
-                  v-if="crawlerRunning"
-                  @click="stopCrawler"
-                  class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold flex items-center shadow-sm">
-                  <i class="fa-solid fa-stop mr-1.5"></i>
-                  停止爬取
-                </button>
-                <button 
-                  v-else
-                  @click="startFullCrawl"
-                  class="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold flex items-center shadow-md shadow-red-600/30 transition">
-                  <i class="fa-solid fa-rocket mr-2"></i>
-                  一键全量深度爬取
-                </button>
-              </div>
-            </div>
-
-            <!-- 按层级定向爬取操作卡片（支持大类、产品线、产品型号三级联动） -->
-            <div class="p-5 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <span class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center">
-                  <i class="fa-solid fa-filter mr-1.5 text-slate-500"></i>
-                  按层级定向快速爬取（大类 / 产品线 / 型号）
-                </span>
-                <span class="text-xs text-slate-400">
-                  只选大类将爬取该大类下全部产品线及型号；选到产品线则爬取该线全部型号；选到型号则精准爬取该型号。
-                </span>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <!-- 内容区 -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
+          <!-- =================== TAB 1: 文档中心 =================== -->
+          <div v-if="activeTab === 'docs'" class="space-y-4">
+            <!-- 多级联动筛选卡片 -->
+            <div
+              class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4"
+            >
+              <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <!-- 1. 产品大类 -->
                 <div>
-                  <label class="block text-xs font-semibold text-slate-600 mb-1">1. 产品大类</label>
-                  <select 
-                    v-model="crawlerScope.categoryId" 
-                    @change="onCrawlerCategoryChange"
-                    class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
-                    <option value="">全部大类 (请选择)</option>
-                    <option v-for="cat in categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                  <label class="block text-xs font-medium text-slate-500 mb-1.5"
+                    >产品大类</label
+                  >
+                  <select
+                    v-model="filters.categoryId"
+                    @change="onCategoryChange"
+                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  >
+                    <option value="">全部大类</option>
+                    <option
+                      v-for="cat in categories"
+                      :key="cat.id"
+                      :value="cat.id"
+                    >
+                      {{ cat.name }}
+                    </option>
                   </select>
                 </div>
 
                 <!-- 2. 二级产品线 -->
                 <div>
-                  <label class="block text-xs font-semibold text-slate-600 mb-1">2. 二级产品线</label>
-                  <select 
-                    v-model="crawlerScope.lineId" 
-                    @change="onCrawlerLineChange"
-                    :disabled="!crawlerLines.length"
-                    class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50">
-                    <option value="">全部产品线 (可选)</option>
-                    <option v-for="line in crawlerLines" :key="line.id" :value="line.id">{{ line.name }}</option>
+                  <label class="block text-xs font-medium text-slate-500 mb-1.5"
+                    >二级产品线</label
+                  >
+                  <select
+                    v-model="filters.productLineId"
+                    @change="onProductLineChange"
+                    :disabled="!currentProductLines.length"
+                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50"
+                  >
+                    <option value="">全部产品线</option>
+                    <option
+                      v-for="line in currentProductLines"
+                      :key="line.id"
+                      :value="line.id"
+                    >
+                      {{ line.name }}
+                    </option>
                   </select>
                 </div>
 
-                <!-- 3. 产品系列 / 型号 -->
+                <!-- 3. 产品系列/型号 -->
                 <div>
-                  <label class="block text-xs font-semibold text-slate-600 mb-1">3. 产品系列 / 型号</label>
-                  <select 
-                    v-model="crawlerScope.productId" 
-                    :disabled="!crawlerProducts.length"
-                    class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50">
-                    <option value="">全部型号 (可选)</option>
-                    <option v-for="prod in crawlerProducts" :key="prod.id" :value="prod.id">{{ prod.name }}</option>
+                  <label class="block text-xs font-medium text-slate-500 mb-1.5"
+                    >产品系列 / 型号</label
+                  >
+                  <select
+                    v-model="filters.productId"
+                    @change="onProductChange"
+                    :disabled="!products.length"
+                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50"
+                  >
+                    <option value="">全部型号</option>
+                    <option
+                      v-for="prod in products"
+                      :key="prod.id"
+                      :value="prod.id"
+                    >
+                      {{ prod.name }}
+                    </option>
                   </select>
+                </div>
+
+                <!-- 4. 关键词搜索 -->
+                <div>
+                  <label class="block text-xs font-medium text-slate-500 mb-1.5"
+                    >关键词搜索</label
+                  >
+                  <div class="relative">
+                    <input
+                      type="text"
+                      v-model="filters.keyword"
+                      @input="debounceSearch"
+                      placeholder="输入文档名或型号搜索..."
+                      class="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    />
+                    <i
+                      class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"
+                    ></i>
+                  </div>
                 </div>
               </div>
 
-              <div class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-200 gap-3">
-                <div class="text-xs text-slate-500">
-                  <span>当前爬取范围: </span>
-                  <strong class="text-slate-800 font-semibold">{{ crawlerTargetDesc }}</strong>
+              <!-- 快捷格式与状态切换栏 -->
+              <div
+                class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-100 gap-3"
+              >
+                <!-- 格式类型 Tab -->
+                <div
+                  class="flex items-center space-x-1.5 bg-slate-100 p-1 rounded-lg"
+                >
+                  <button
+                    v-for="type in ['ALL', 'HDX', 'CHM', 'PDF', 'ZIP', '多媒体']"
+                    :key="type"
+                    @click="setDocTypeFilter(type)"
+                    :class="filters.docType === type ? 'bg-white text-red-600 font-semibold shadow-sm' : 'text-slate-600 hover:text-slate-900'"
+                    class="px-3 py-1 text-xs rounded-md transition duration-150"
+                  >
+                    {{ type === 'ALL' ? '全部格式' : type }}
+                  </button>
                 </div>
 
-                <button 
-                  @click="startScopedCrawl" 
-                  :disabled="!canStartScopedCrawl || crawlerRunning"
-                  class="px-5 py-2 bg-slate-900 hover:bg-black disabled:opacity-40 text-white rounded-lg text-xs font-semibold flex items-center shadow-sm transition">
-                  <i class="fa-solid fa-play mr-1.5 text-emerald-400"></i>
-                  {{ scopedCrawlButtonText }}
+                <!-- 下载状态过滤 -->
+                <div class="flex items-center space-x-2 text-xs">
+                  <span class="text-slate-500">状态:</span>
+                  <select
+                    v-model="filters.isDownloaded"
+                    @change="loadDocuments"
+                    class="bg-slate-50 border border-slate-300 rounded-md px-2 py-1 text-xs text-slate-700"
+                  >
+                    <option :value="''">全部状态</option>
+                    <option :value="1">仅显示已下载</option>
+                    <option :value="0">仅显示未下载</option>
+                  </select>
+
+                  <button
+                    @click="resetFilters"
+                    class="text-slate-500 hover:text-red-600 px-2 py-1 text-xs"
+                  >
+                    重置筛选
+                  </button>
+                </div>
+              </div>
+
+              <!-- 资料分类 / 标签过滤栏 (产品文档包、资料书架、方案概述、特性描述等) -->
+              <div
+                class="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-100 text-xs"
+              >
+                <span class="text-slate-500 font-medium mr-1 flex items-center">
+                  <i class="fa-solid fa-tags text-slate-400 mr-1.5"></i
+                  >资料分类:
+                </span>
+                <button
+                  @click="setDocCategoryFilter('ALL')"
+                  :class="filters.docCategory === 'ALL' || !filters.docCategory ? 'bg-slate-900 text-white font-semibold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                  class="px-2.5 py-1 rounded-md transition duration-150"
+                >
+                  全部
+                </button>
+                <button
+                  v-for="catTag in availableDocCategories"
+                  :key="catTag"
+                  @click="setDocCategoryFilter(catTag)"
+                  :class="filters.docCategory === catTag ? 'bg-red-600 text-white font-semibold shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'"
+                  class="px-2.5 py-1 rounded-md transition duration-150"
+                >
+                  {{ catTag }}
                 </button>
               </div>
             </div>
 
-            <!-- 爬虫实时进度条 -->
-            <div v-if="crawlerProgress.total > 0" class="space-y-1.5 bg-blue-50/70 p-4 rounded-xl border border-blue-200">
-              <div class="flex items-center justify-between text-xs text-blue-900 font-medium">
-                <span>{{ crawlerProgress.item }}</span>
-                <span>{{ crawlerProgress.current }} / {{ crawlerProgress.total }}</span>
+            <!-- 文档列表卡片与批量操作 -->
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"
+            >
+              <!-- 表格顶部批量操作栏 -->
+              <div
+                class="px-6 py-3.5 bg-slate-50/70 border-b border-slate-200 flex items-center justify-between"
+              >
+                <div class="flex items-center space-x-3">
+                  <label
+                    class="flex items-center space-x-2 text-xs font-medium text-slate-600 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="isAllSelected"
+                      @change="toggleSelectAll"
+                      class="rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                    />
+                    <span
+                      >全选本页 ({{ selectedNIDs.length }} / {{ docList.length
+                      }})</span
+                    >
+                  </label>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                  <button
+                    @click="batchDownloadSelected"
+                    :disabled="selectedNIDs.length === 0"
+                    class="px-4 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:hover:bg-red-600 text-white rounded-lg text-xs font-medium flex items-center shadow-sm transition"
+                  >
+                    <i class="fa-solid fa-cloud-arrow-down mr-1.5"></i>
+                    批量下载选中项 ({{ selectedNIDs.length }})
+                  </button>
+                </div>
               </div>
-              <div class="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden">
-                <div 
-                  class="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                  :style="{ width: (crawlerProgress.current / crawlerProgress.total * 100) + '%' }">
+
+              <!-- 表格内容 -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm text-slate-600">
+                  <thead
+                    class="bg-slate-50 text-xs text-slate-400 uppercase border-b border-slate-200"
+                  >
+                    <tr>
+                      <th scope="col" class="p-4 w-10"></th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700"
+                      >
+                        文档名称
+                      </th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700"
+                      >
+                        格式
+                      </th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700"
+                      >
+                        更新日期
+                      </th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700"
+                      >
+                        所属型号
+                      </th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700"
+                      >
+                        文件大小
+                      </th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700"
+                      >
+                        下载状态
+                      </th>
+                      <th
+                        scope="col"
+                        class="px-4 py-3 font-semibold text-slate-700 text-right"
+                      >
+                        操作
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100">
+                    <tr v-if="loadingDocs">
+                      <td colspan="8" class="py-12 text-center text-slate-400">
+                        <i
+                          class="fa-solid fa-spinner animate-spin text-2xl mb-2 text-red-500"
+                        ></i>
+                        <p class="text-xs">加载文档列表中...</p>
+                      </td>
+                    </tr>
+                    <tr v-else-if="docList.length === 0">
+                      <td colspan="8" class="py-16 text-center text-slate-400">
+                        <i
+                          class="fa-solid fa-spider text-4xl mb-3 text-slate-300"
+                        ></i>
+                        <p class="text-base font-semibold text-slate-700">
+                          暂无产品文档数据
+                        </p>
+                        <p class="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                          请点击下方按钮启动华为官网爬虫，自动爬取各产品线与型号的所有官方文档及下载直链。
+                        </p>
+                        <div class="mt-4">
+                          <button
+                            @click="activeTab = 'crawler'"
+                            class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm inline-flex items-center"
+                          >
+                            <i class="fa-solid fa-rocket mr-1.5"></i>
+                            前往爬虫中心立即抓取
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr
+                      v-else
+                      v-for="doc in docList"
+                      :key="doc.nid"
+                      :class="selectedNIDs.includes(doc.nid) ? 'bg-red-50/40' : 'hover:bg-slate-50/80'"
+                      class="transition-colors"
+                    >
+                      <!-- 复选框 -->
+                      <td class="p-4">
+                        <input
+                          type="checkbox"
+                          :value="doc.nid"
+                          v-model="selectedNIDs"
+                          class="rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                        />
+                      </td>
+
+                      <!-- 文档名称与 NID 以及新版本标签 -->
+                      <td class="px-4 py-3.5">
+                        <div
+                          class="font-medium text-slate-900 flex items-center flex-wrap gap-1.5"
+                        >
+                          <i
+                            :class="getDocIcon(doc.docType)"
+                            class="mr-1 text-base flex-shrink-0"
+                          ></i>
+                          <a
+                            :href="'https://support.huawei.com/enterprise/zh/doc/' + doc.nid"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="hover:text-red-600 hover:underline transition-colors inline-flex items-center group cursor-pointer"
+                            :title="'点击在浏览器中打开官方文档页面: ' + doc.name"
+                          >
+                            <span>{{ doc.name }}</span>
+                            <i
+                              class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            ></i>
+                          </a>
+                          <span
+                            v-if="doc.isNewVersion"
+                            class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200/80 shadow-sm animate-pulse"
+                          >
+                            <i
+                              class="fa-solid fa-fire mr-1 text-rose-500 text-[10px]"
+                            ></i
+                            >新版本
+                          </span>
+                        </div>
+                        <div
+                          class="text-xs text-slate-400 mt-1 flex items-center flex-wrap gap-2"
+                        >
+                          <span
+                            >编号:
+                            <code
+                              class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]"
+                              >{{ doc.nid }}</code
+                            ></span
+                          >
+                          <span
+                            v-if="doc.docCategory"
+                            @click.stop="setDocCategoryFilter(doc.docCategory)"
+                            class="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/70 cursor-pointer text-[11px] font-medium transition"
+                            :title="'点击按此分类筛选: ' + doc.docCategory"
+                          >
+                            <i
+                              class="fa-solid fa-tag text-[9px] mr-1 text-blue-500"
+                            ></i
+                            >{{ doc.docCategory }}
+                          </span>
+                        </div>
+                      </td>
+
+                      <!-- 格式徽章 -->
+                      <td class="px-4 py-3.5">
+                        <span
+                          :class="getDocTypeBadgeClass(doc.docType)"
+                          class="px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide"
+                        >
+                          {{ doc.docType }}
+                        </span>
+                      </td>
+
+                      <!-- 更新日期 -->
+                      <td class="px-4 py-3.5 text-xs text-slate-600">
+                        <div
+                          class="flex items-center font-mono text-slate-700"
+                          :title="'完整发布时间: ' + (doc.publishTime || doc.lastUpdateTime || '-')"
+                        >
+                          <i
+                            class="fa-regular fa-calendar-days text-slate-400 mr-1.5 text-[11px]"
+                          ></i>
+                          <span>{{ doc.publishDate || '-' }}</span>
+                        </div>
+                      </td>
+
+                      <!-- 所属型号 -->
+                      <td class="px-4 py-3.5 text-xs text-slate-600">
+                        <div>{{ doc.productName || '通用' }}</div>
+                        <div class="text-slate-400">
+                          {{ doc.productLineName }}
+                        </div>
+                      </td>
+
+                      <!-- 文件大小 -->
+                      <td class="px-4 py-3.5 text-xs font-mono text-slate-600">
+                        {{ doc.fileSizeStr || '-' }}
+                      </td>
+
+                      <!-- 下载状态（已下载徽章高亮） -->
+                      <td class="px-4 py-3.5">
+                        <div
+                          v-if="doc.isDownloaded === 1"
+                          class="flex items-center space-x-1.5"
+                        >
+                          <span
+                            v-if="doc.isNewVersion"
+                            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-sm"
+                          >
+                            <i
+                              class="fa-solid fa-circle-check text-emerald-600 mr-1 text-[10px]"
+                            ></i>
+                            已下载(最新)
+                          </span>
+                          <span
+                            v-else
+                            class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm"
+                          >
+                            <i
+                              class="fa-solid fa-check text-emerald-500 mr-1 text-[10px]"
+                            ></i>
+                            已下载(旧版)
+                          </span>
+                        </div>
+                        <span
+                          v-else
+                          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-500"
+                        >
+                          未下载
+                        </span>
+                      </td>
+
+                      <!-- 操作 -->
+                      <td class="px-4 py-3.5 text-right space-x-2">
+                        <button
+                          v-if="doc.isDownloaded === 1"
+                          @click="openLocalFolder(doc.localPath)"
+                          title="在文件夹中打开"
+                          class="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition"
+                        >
+                          <i class="fa-regular fa-folder-open"></i>
+                        </button>
+
+                        <button
+                          @click="startDownloadSingle(doc)"
+                          :class="doc.isDownloaded === 1 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-red-600 text-white hover:bg-red-700 shadow-sm shadow-red-500/20'"
+                          class="px-3 py-1 rounded-md text-xs font-medium inline-flex items-center transition"
+                        >
+                          <i class="fa-solid fa-download mr-1"></i>
+                          {{ doc.isDownloaded === 1 ? '重新下载' : '下载' }}
+                        </button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 分页栏 -->
+              <div
+                class="px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-xs text-slate-500"
+              >
+                <div>
+                  显示第 {{ (docPagination.page - 1) * docPagination.pageSize +
+                  1 }} 到 {{ Math.min(docPagination.page *
+                  docPagination.pageSize, docPagination.total) }} 条，共 {{
+                  docPagination.total }} 条
+                </div>
+                <div class="flex items-center space-x-2">
+                  <button
+                    @click="changePage(docPagination.page - 1)"
+                    :disabled="docPagination.page <= 1"
+                    class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    上一页
+                  </button>
+                  <span class="font-medium text-slate-700"
+                    >第 {{ docPagination.page }} 页</span
+                  >
+                  <button
+                    @click="changePage(docPagination.page + 1)"
+                    :disabled="docPagination.page * docPagination.pageSize >= docPagination.total"
+                    class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    下一页
+                  </button>
                 </div>
               </div>
             </div>
+          </div>
 
-            <!-- 实时控制台输出窗口 -->
-            <div class="space-y-2">
-              <div class="flex items-center justify-between">
-                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center">
-                  <i class="fa-solid fa-terminal mr-1.5 text-slate-500"></i>
-                  爬虫实时运行日志
+          <!-- =================== TAB 2: 下载管理 =================== -->
+          <div v-if="activeTab === 'downloads'" class="space-y-4">
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 p-5"
+            >
+              <div class="flex items-center justify-between mb-4">
+                <h3 class="text-base font-bold text-slate-800">
+                  下载任务队列 ({{ downloadTasks.length }})
+                </h3>
+                <div class="flex items-center space-x-2 text-xs">
+                  <span class="text-slate-500">下载保存目录:</span>
+                  <code
+                    class="bg-slate-100 text-slate-700 px-2 py-1 rounded font-mono"
+                    >{{ config.downloadDir }}</code
+                  >
+                  <button
+                    @click="openLocalFolder(config.downloadDir)"
+                    class="text-blue-600 hover:underline"
+                  >
+                    打开目录
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-if="downloadTasks.length === 0"
+                class="py-16 text-center text-slate-400"
+              >
+                <i class="fa-solid fa-inbox text-4xl mb-3 text-slate-300"></i>
+                <p class="text-sm">暂无下载任务</p>
+                <p class="text-xs text-slate-400 mt-1">
+                  可在“文档中心”勾选并批量添加下载
+                </p>
+              </div>
+
+              <div v-else class="space-y-3">
+                <div
+                  v-for="task in downloadTasks"
+                  :key="task.id"
+                  class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white transition shadow-sm space-y-3"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3">
+                      <span
+                        :class="getDocTypeBadgeClass(task.docType)"
+                        class="px-2 py-0.5 rounded text-xs font-bold"
+                      >
+                        {{ task.docType || 'DOC' }}
+                      </span>
+                      <div>
+                        <h4 class="font-medium text-slate-900 text-sm">
+                          {{ task.docName }}
+                        </h4>
+                        <p class="text-xs text-slate-400 font-mono">
+                          {{ task.fileName || task.docNid }}
+                        </p>
+                      </div>
+                    </div>
+
+                    <!-- 状态与控制按钮 -->
+                    <div class="flex items-center space-x-3">
+                      <span
+                        :class="getTaskStatusBadgeClass(task.status)"
+                        class="px-2.5 py-0.5 rounded-full text-xs font-semibold"
+                      >
+                        {{ getTaskStatusStr(task.status) }}
+                      </span>
+
+                      <button
+                        v-if="task.status === 1"
+                        @click="pauseTask(task.id)"
+                        title="暂停"
+                        class="p-1.5 text-slate-500 hover:text-amber-600 rounded"
+                      >
+                        <i class="fa-solid fa-pause"></i>
+                      </button>
+                      <button
+                        v-if="task.status === 4 || task.status === 3"
+                        @click="resumeTask(task.id)"
+                        title="继续/重试"
+                        class="p-1.5 text-slate-500 hover:text-emerald-600 rounded"
+                      >
+                        <i class="fa-solid fa-play"></i>
+                      </button>
+                      <button
+                        v-if="task.status === 2"
+                        @click="openLocalFolder(task.savePath)"
+                        title="定位文件"
+                        class="p-1.5 text-slate-500 hover:text-blue-600 rounded"
+                      >
+                        <i class="fa-regular fa-folder-open"></i>
+                      </button>
+                      <button
+                        @click="deleteTask(task.id)"
+                        title="移除任务"
+                        class="p-1.5 text-slate-400 hover:text-red-600 rounded"
+                      >
+                        <i class="fa-solid fa-trash-can"></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 进度条与速度 -->
+                  <div class="space-y-1.5">
+                    <div
+                      class="w-full bg-slate-200 rounded-full h-2 overflow-hidden"
+                    >
+                      <div
+                        class="h-2 rounded-full transition-all duration-300"
+                        :class="task.status === 2 ? 'bg-emerald-500' : task.status === 3 ? 'bg-red-500' : 'bg-red-600'"
+                        :style="{ width: (task.progress || 0) + '%' }"
+                      ></div>
+                    </div>
+                    <div
+                      class="flex items-center justify-between text-xs text-slate-500 font-mono"
+                    >
+                      <div>
+                        <span>{{ (task.progress || 0).toFixed(1) }}%</span>
+                        <span v-if="task.totalBytes > 0" class="ml-2">
+                          ({{ formatBytes(task.downloadedBytes) }} / {{
+                          formatBytes(task.totalBytes) }})
+                        </span>
+                      </div>
+                      <div
+                        v-if="task.status === 1"
+                        class="text-red-600 font-semibold"
+                      >
+                        <i class="fa-solid fa-bolt mr-1"></i>{{ task.speedStr ||
+                        '0 KB/s' }}
+                      </div>
+                      <div v-else-if="task.status === 3" class="text-red-500">
+                        {{ task.errorMsg || '下载失败' }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- =================== TAB 3: 本地文档库与扫描 =================== -->
+          <div v-if="activeTab === 'scanner'" class="space-y-4">
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6"
+            >
+              <div class="flex items-start justify-between">
+                <div>
+                  <h3 class="text-base font-bold text-slate-800">
+                    本地文档智能扫描与打标
+                  </h3>
+                  <p class="text-xs text-slate-500 mt-1">
+                    系统会自动递归遍历指定目录，识别已存在的 HDX/CHM/PDF/ZIP
+                    文档，并在界面标记为【已下载】。
+                  </p>
+                </div>
+                <button
+                  @click="triggerScan"
+                  :disabled="scanning"
+                  class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center shadow-sm shadow-emerald-600/30 transition"
+                >
+                  <i
+                    class="fa-solid fa-radar mr-2"
+                    :class="scanning ? 'animate-spin' : ''"
+                  ></i>
+                  {{ scanning ? '扫描比对中...' : '立即扫描本地目录' }}
+                </button>
+              </div>
+
+              <!-- 扫描统计面板 -->
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div class="text-xs text-slate-500 mb-1">监控下载目录</div>
+                  <div
+                    class="text-sm font-mono font-medium text-slate-800 truncate"
+                    :title="config.downloadDir"
+                  >
+                    {{ config.downloadDir }}
+                  </div>
+                </div>
+                <div
+                  class="p-4 bg-emerald-50 rounded-xl border border-emerald-100"
+                >
+                  <div class="text-xs text-emerald-600 mb-1">
+                    已匹配/已加载文档
+                  </div>
+                  <div class="text-2xl font-bold text-emerald-700">
+                    {{ stats.downloaded || 0 }} 篇
+                  </div>
+                </div>
+                <div class="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                  <div class="text-xs text-blue-600 mb-1">文档总收录数</div>
+                  <div class="text-2xl font-bold text-blue-700">
+                    {{ stats.documents || 0 }} 篇
+                  </div>
+                </div>
+              </div>
+
+              <!-- 最近扫描结果展示 -->
+              <div
+                v-if="lastScanResult"
+                class="border-t border-slate-100 pt-4 space-y-3"
+              >
+                <h4
+                  class="text-xs font-bold text-slate-700 uppercase tracking-wider"
+                >
+                  最近一次扫描报告
                 </h4>
-                <button @click="crawlerLogs = []" class="text-xs text-slate-400 hover:text-slate-600">清空日志</button>
-              </div>
-              <div 
-                ref="logContainer" 
-                class="bg-slate-950 text-emerald-400 p-4 rounded-xl font-mono text-xs h-72 overflow-y-auto custom-scrollbar space-y-1 shadow-inner border border-slate-800">
-                <div v-if="crawlerLogs.length === 0" class="text-slate-500 italic">
-                  [系统准备就绪] 点击上方按钮开始爬取，日志将在此实时显示...
+                <div
+                  class="bg-slate-50 p-4 rounded-lg text-xs space-y-2 text-slate-600"
+                >
+                  <p>
+                    📂 遍历本地文件总数:
+                    <strong class="text-slate-900"
+                      >{{ lastScanResult.totalScannedFiles }}</strong
+                    >
+                  </p>
+                  <p>
+                    ✅ 成功匹配并标记已下载文档:
+                    <strong class="text-emerald-600"
+                      >{{ lastScanResult.matchedDocsCount }}</strong
+                    >
+                    篇
+                  </p>
                 </div>
-                <div v-for="(log, idx) in crawlerLogs" :key="idx" class="leading-relaxed">
-                  {{ log }}
+              </div>
+            </div>
+          </div>
+
+          <!-- =================== TAB 4: 官网爬虫中心 =================== -->
+          <div v-if="activeTab === 'crawler'" class="space-y-4">
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6"
+            >
+              <div class="flex items-start justify-between">
+                <div>
+                  <h3 class="text-base font-bold text-slate-800">
+                    华为 Support 官网文档爬虫引擎
+                  </h3>
+                  <p class="text-xs text-slate-500 mt-1">
+                    自动递归抓取华为官网全量 12 大类、63
+                    条产品线、所有型号、版本树及官方文档（HDX / CHM / PDF 等）。
+                  </p>
+                </div>
+
+                <!-- 运行控制按钮 -->
+                <div class="flex items-center space-x-3">
+                  <!-- 手动全量同步产品分类树 -->
+                  <button
+                    type="button"
+                    @click="triggerManualCategorySync"
+                    :disabled="categorySyncStatus.isSyncing || crawlerRunning"
+                    class="px-4 py-2.5 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 rounded-lg text-sm font-semibold flex items-center transition border border-slate-300 shadow-sm"
+                  >
+                    <i
+                      class="fa-solid fa-arrows-rotate mr-2"
+                      :class="categorySyncStatus.isSyncing ? 'animate-spin text-red-600' : 'text-slate-500'"
+                    ></i>
+                    {{ categorySyncStatus.isSyncing ? '正在同步分类树...' : '手动全量同步产品分类树' }}
+                  </button>
+
+                  <button
+                    v-if="crawlerRunning"
+                    @click="stopCrawler"
+                    class="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold flex items-center shadow-md shadow-red-600/30"
+                  >
+                    <i class="fa-solid fa-stop mr-2"></i>
+                    停止爬取
+                  </button>
+                  <button
+                    v-else
+                    @click="startFullCrawl"
+                    :disabled="categorySyncStatus.isSyncing"
+                    class="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center shadow-md shadow-red-600/30 transition"
+                  >
+                    <i class="fa-solid fa-rocket mr-2"></i>
+                    一键全量深度爬取
+                  </button>
+                </div>
+              </div>
+
+              <!-- 按层级定向爬取操作卡片（支持大类、产品线、产品型号三级联动） -->
+              <div
+                class="p-5 rounded-xl bg-slate-50 border border-slate-200 space-y-4"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span
+                    class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center"
+                  >
+                    <i class="fa-solid fa-filter mr-1.5 text-slate-500"></i>
+                    按层级定向快速爬取（大类 / 产品线 / 型号）
+                  </span>
+                  <span class="text-xs text-slate-400">
+                    只选大类将爬取该大类下全部产品线及型号；选到产品线则爬取该线全部型号；选到型号则精准爬取该型号。
+                  </span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <!-- 1. 产品大类 -->
+                  <div>
+                    <label
+                      class="block text-xs font-semibold text-slate-600 mb-1"
+                      >1. 产品大类</label
+                    >
+                    <select
+                      v-model="crawlerScope.categoryId"
+                      @change="onCrawlerCategoryChange"
+                      class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    >
+                      <option value="">全部大类 (请选择)</option>
+                      <option
+                        v-for="cat in categories"
+                        :key="cat.id"
+                        :value="cat.id"
+                      >
+                        {{ cat.name }}
+                      </option>
+                    </select>
+                  </div>
+
+                  <!-- 2. 二级产品线 -->
+                  <div>
+                    <label
+                      class="block text-xs font-semibold text-slate-600 mb-1"
+                      >2. 二级产品线</label
+                    >
+                    <select
+                      v-model="crawlerScope.lineId"
+                      @change="onCrawlerLineChange"
+                      :disabled="!crawlerLines.length"
+                      class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+                    >
+                      <option value="">全部产品线 (可选)</option>
+                      <option
+                        v-for="line in crawlerLines"
+                        :key="line.id"
+                        :value="line.id"
+                      >
+                        {{ line.name }}
+                      </option>
+                    </select>
+                  </div>
+
+                  <!-- 3. 产品系列 / 型号 -->
+                  <div>
+                    <label
+                      class="block text-xs font-semibold text-slate-600 mb-1"
+                      >3. 产品系列 / 型号</label
+                    >
+                    <select
+                      v-model="crawlerScope.productId"
+                      :disabled="!crawlerProducts.length"
+                      class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+                    >
+                      <option value="">全部型号 (可选)</option>
+                      <option
+                        v-for="prod in crawlerProducts"
+                        :key="prod.id"
+                        :value="prod.id"
+                      >
+                        {{ prod.name }}
+                      </option>
+                    </select>
+                  </div>
+                </div>
+
+                <div
+                  class="flex flex-wrap items-center justify-between pt-3 border-t border-slate-200 gap-3"
+                >
+                  <div class="text-xs text-slate-500">
+                    <span>当前爬取范围: </span>
+                    <strong class="text-slate-800 font-semibold"
+                      >{{ crawlerTargetDesc }}</strong
+                    >
+                  </div>
+
+                  <button
+                    @click="startScopedCrawl"
+                    :disabled="!canStartScopedCrawl || crawlerRunning"
+                    class="px-5 py-2 bg-slate-900 hover:bg-black disabled:opacity-40 text-white rounded-lg text-xs font-semibold flex items-center shadow-sm transition"
+                  >
+                    <i class="fa-solid fa-play mr-1.5 text-emerald-400"></i>
+                    {{ scopedCrawlButtonText }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 爬虫实时进度条 -->
+              <div
+                v-if="crawlerProgress.total > 0"
+                class="space-y-1.5 bg-blue-50/70 p-4 rounded-xl border border-blue-200"
+              >
+                <div
+                  class="flex items-center justify-between text-xs text-blue-900 font-medium"
+                >
+                  <span>{{ crawlerProgress.item }}</span>
+                  <span
+                    >{{ crawlerProgress.current }} / {{ crawlerProgress.total
+                    }}</span
+                  >
+                </div>
+                <div
+                  class="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden"
+                >
+                  <div
+                    class="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    :style="{ width: (crawlerProgress.current / crawlerProgress.total * 100) + '%' }"
+                  ></div>
+                </div>
+              </div>
+
+              <!-- 实时控制台输出窗口 -->
+              <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <h4
+                    class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center"
+                  >
+                    <i class="fa-solid fa-terminal mr-1.5 text-slate-500"></i>
+                    爬虫实时运行日志
+                  </h4>
+                  <button
+                    @click="crawlerLogs = []"
+                    class="text-xs text-slate-400 hover:text-slate-600"
+                  >
+                    清空日志
+                  </button>
+                </div>
+                <div
+                  ref="logContainer"
+                  class="bg-slate-950 text-emerald-400 p-4 rounded-xl font-mono text-xs h-72 overflow-y-auto custom-scrollbar space-y-1 shadow-inner border border-slate-800"
+                >
+                  <div
+                    v-if="crawlerLogs.length === 0"
+                    class="text-slate-500 italic"
+                  >
+                    [系统准备就绪] 点击上方按钮开始爬取，日志将在此实时显示...
+                  </div>
+                  <div
+                    v-for="(log, idx) in crawlerLogs"
+                    :key="idx"
+                    class="leading-relaxed"
+                  >
+                    {{ log }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 数据统计概览 -->
+              <div class="border-t border-slate-100 pt-5 space-y-3">
+                <h4
+                  class="text-xs font-bold text-slate-700 uppercase tracking-wider"
+                >
+                  当前数据库统计看板
+                </h4>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+                  <div
+                    class="p-3 bg-slate-50 rounded-lg border border-slate-200"
+                  >
+                    <div class="text-xl font-bold text-slate-800">
+                      {{ stats.categories || 0 }}
+                    </div>
+                    <div class="text-xs text-slate-500">产品大类</div>
+                  </div>
+                  <div
+                    class="p-3 bg-slate-50 rounded-lg border border-slate-200"
+                  >
+                    <div class="text-xl font-bold text-slate-800">
+                      {{ stats.lines || 0 }}
+                    </div>
+                    <div class="text-xs text-slate-500">二级产品线</div>
+                  </div>
+                  <div
+                    class="p-3 bg-slate-50 rounded-lg border border-slate-200"
+                  >
+                    <div class="text-xl font-bold text-slate-800">
+                      {{ stats.products || 0 }}
+                    </div>
+                    <div class="text-xs text-slate-500">产品系列/型号</div>
+                  </div>
+                  <div
+                    class="p-3 bg-slate-50 rounded-lg border border-slate-200"
+                  >
+                    <div class="text-xl font-bold text-red-600">
+                      {{ stats.documents || 0 }}
+                    </div>
+                    <div class="text-xs text-slate-500">产品文档收录数</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- =================== TAB 5: 系统设置 =================== -->
+          <div v-if="activeTab === 'settings'" class="space-y-6 max-w-4xl">
+            <!-- 1. 下载参数配置 -->
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"
+            >
+              <div
+                class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between"
+              >
+                <div class="flex items-center space-x-2">
+                  <div
+                    class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center"
+                  >
+                    <i class="fa-solid fa-download text-sm"></i>
+                  </div>
+                  <div>
+                    <h3 class="text-sm font-bold text-slate-800">
+                      下载参数配置
+                    </h3>
+                    <p class="text-xs text-slate-400">
+                      配置本地下载根目录、多任务并发与单文件分片多线程加速
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div class="p-6 space-y-5">
+                <!-- 下载目录 -->
+                <div>
+                  <label
+                    class="block text-xs font-semibold text-slate-700 mb-1.5"
+                    >文档下载保存根目录</label
+                  >
+                  <input
+                    type="text"
+                    v-model="configForm.downloadDir"
+                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-red-500"
+                  />
+                  <p class="text-xs text-slate-400 mt-1">
+                    下载的文件将存放在该目录，支持绝对路径（如 D:\HuaweiDocs）
+                  </p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <!-- 最大并发下载文件数 -->
+                  <div
+                    class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
+                  >
+                    <label class="block text-xs font-semibold text-slate-700"
+                      >最大并发下载文件数 (1-10)</label
+                    >
+                    <input
+                      type="number"
+                      v-model.number="configForm.maxConcurrent"
+                      min="1"
+                      max="10"
+                      class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <p class="text-xs text-slate-400">
+                      同时下载的不同文档文件数量（建议
+                      2~5，避免带宽占满或被限流）
+                    </p>
+                  </div>
+
+                  <!-- 单文件分片并发线程数 -->
+                  <div
+                    class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
+                  >
+                    <label class="block text-xs font-semibold text-slate-700"
+                      >单文件下载并发线程数 (1-32)</label
+                    >
+                    <input
+                      type="number"
+                      v-model.number="configForm.fileThreads"
+                      min="1"
+                      max="32"
+                      class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <p class="text-xs text-slate-400">
+                      单个文档的多线程分片下载数（默认为 1 单流；设置 2-32
+                      可开启多分片并发加速下载）。
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- 数据统计概览 -->
-            <div class="border-t border-slate-100 pt-5 space-y-3">
-              <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">当前数据库统计看板</h4>
-              <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
-                <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <div class="text-xl font-bold text-slate-800">{{ stats.categories || 0 }}</div>
-                  <div class="text-xs text-slate-500">产品大类</div>
-                </div>
-                <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <div class="text-xl font-bold text-slate-800">{{ stats.lines || 0 }}</div>
-                  <div class="text-xs text-slate-500">二级产品线</div>
-                </div>
-                <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <div class="text-xl font-bold text-slate-800">{{ stats.products || 0 }}</div>
-                  <div class="text-xs text-slate-500">产品系列/型号</div>
-                </div>
-                <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
-                  <div class="text-xl font-bold text-red-600">{{ stats.documents || 0 }}</div>
-                  <div class="text-xs text-slate-500">产品文档收录数</div>
+            <!-- 2. 爬虫引擎配置 -->
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"
+            >
+              <div
+                class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between"
+              >
+                <div class="flex items-center space-x-2">
+                  <div
+                    class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center"
+                  >
+                    <i class="fa-solid fa-spider text-sm"></i>
+                  </div>
+                  <div>
+                    <h3 class="text-sm font-bold text-slate-800">
+                      爬虫引擎配置
+                    </h3>
+                    <p class="text-xs text-slate-400">
+                      控制爬虫并发工作线程数、接口请求延时、身份 Cookie
+                      与分类树自动同步
+                    </p>
+                  </div>
                 </div>
               </div>
+              <div class="p-6 space-y-5">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <!-- 爬虫并发工作线程数 -->
+                  <div
+                    class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
+                  >
+                    <label class="block text-xs font-semibold text-slate-700"
+                      >爬虫并发工作线程数 (1-32)</label
+                    >
+                    <input
+                      type="number"
+                      v-model.number="configForm.crawlerThreads"
+                      min="1"
+                      max="32"
+                      class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <p class="text-xs text-slate-400">
+                      多线程爬取各产品型号与文档树（默认为 1 线程；设置 2-32
+                      时日志将显示 [爬虫-1] ~ [爬虫-N] 工作标示）。
+                    </p>
+                  </div>
+
+                  <!-- 爬虫请求间隔延迟 -->
+                  <div
+                    class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
+                  >
+                    <label class="block text-xs font-semibold text-slate-700"
+                      >爬虫请求间隔延迟 (毫秒)</label
+                    >
+                    <input
+                      type="number"
+                      v-model.number="configForm.requestDelayMs"
+                      min="0"
+                      step="100"
+                      class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <p class="text-xs text-slate-400">
+                      爬取接口之间的等待时间，防止请求过快触发反爬
+                    </p>
+                  </div>
+                </div>
+
+                <!-- 自定义 Cookie -->
+                <div>
+                  <label
+                    class="block text-xs font-semibold text-slate-700 mb-1.5"
+                    >自定义 Cookie (可选/推荐)</label
+                  >
+                  <textarea
+                    v-model="configForm.customCookie"
+                    rows="2"
+                    placeholder="若需抓取包含特定权限或完整文档列表，可在此粘贴您浏览器在 support.huawei.com 上的 Cookie..."
+                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                  ></textarea>
+                  <p class="text-xs text-slate-400 mt-1">
+                    提示：在浏览器打开 support.huawei.com 按 F12 -> 复制请求中的
+                    Cookie 粘贴至此即可。
+                  </p>
+                </div>
+
+                <!-- 启动时自动同步分类树 -->
+                <div
+                  class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200"
+                >
+                  <div>
+                    <div class="text-xs font-semibold text-slate-700">
+                      启动时自动同步产品分类树
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">
+                      每次启动程序时，自动在后台从华为官网更新产品大类、产品线与型号数据。
+                    </div>
+                  </div>
+                  <label
+                    class="relative inline-flex items-center cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      v-model="configForm.autoSyncCategories"
+                      class="sr-only peer"
+                    />
+                    <div
+                      class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"
+                    ></div>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. 系统与日志策略 -->
+            <div
+              class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"
+            >
+              <div
+                class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between"
+              >
+                <div class="flex items-center space-x-2">
+                  <div
+                    class="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center"
+                  >
+                    <i class="fa-solid fa-sliders text-sm"></i>
+                  </div>
+                  <div>
+                    <h3 class="text-sm font-bold text-slate-800">
+                      系统与日志策略
+                    </h3>
+                    <p class="text-xs text-slate-400">
+                      控制系统日志等级与文件转储生命周期管理
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div class="p-6 space-y-4">
+                <!-- 系统日志级别控制 -->
+                <div
+                  class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200"
+                >
+                  <div>
+                    <div class="text-xs font-semibold text-slate-700">
+                      系统日志记录级别
+                    </div>
+                    <div class="text-xs text-slate-400 mt-0.5">
+                      控制输出并持久化到 log.log 的日志详细度，默认推荐为 INFO。
+                    </div>
+                  </div>
+                  <select
+                    v-model="configForm.logLevel"
+                    class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-xs"
+                  >
+                    <option value="debug">DEBUG (详细调试信息)</option>
+                    <option value="info">INFO (常规运行信息 - 默认)</option>
+                    <option value="warn">WARN (警告信息)</option>
+                    <option value="error">ERROR (仅错误)</option>
+                  </select>
+                </div>
+
+                <!-- 日志存储与生命周期说明卡片 -->
+                <div
+                  class="p-4 rounded-xl bg-slate-50/80 border border-slate-200 text-xs text-slate-500 space-y-1.5"
+                >
+                  <div class="font-semibold text-slate-700 flex items-center">
+                    <i class="fa-solid fa-circle-info text-blue-500 mr-1.5"></i>
+                    日志自动转储与生命周期清理策略：
+                  </div>
+                  <div
+                    class="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-slate-600"
+                  >
+                    <div
+                      class="bg-white p-2.5 rounded-lg border border-slate-200"
+                    >
+                      <span class="font-semibold text-slate-700"
+                        >启动转储：</span
+                      >
+                      每次程序启动将旧 log.log 自动重命名为
+                      YYYY-MM-DD_HH-mm-ss.log。
+                    </div>
+                    <div
+                      class="bg-white p-2.5 rounded-lg border border-slate-200"
+                    >
+                      <span class="font-semibold text-slate-700"
+                        >容量上限：</span
+                      >
+                      单文件 10MB 自动分卷滚动，日志总目录超过 1024MB
+                      时按最旧优先淘汰。
+                    </div>
+                    <div
+                      class="bg-white p-2.5 rounded-lg border border-slate-200"
+                    >
+                      <span class="font-semibold text-slate-700"
+                        >超期清理：</span
+                      >
+                      自动清理保留超过 180 天的历史日志文件，保障磁盘空间。
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 保存按钮固定栏 -->
+            <div class="flex items-center justify-between pt-2">
+              <button
+                @click="saveSettings"
+                class="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold shadow-md shadow-red-600/30 transition flex items-center"
+              >
+                <i class="fa-solid fa-floppy-disk mr-2"></i>
+                保存所有系统配置
+              </button>
+              <span class="text-xs text-slate-400"
+                >配置保存后即刻热更新生效，无需重启程序</span
+              >
             </div>
           </div>
         </div>
+      </main>
 
-        <!-- =================== TAB 5: 系统设置 =================== -->
-        <div v-if="activeTab === 'settings'" class="space-y-6 max-w-4xl">
-          <!-- 1. 下载参数配置 -->
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div class="flex items-center space-x-2">
-                <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                  <i class="fa-solid fa-download text-sm"></i>
-                </div>
-                <div>
-                  <h3 class="text-sm font-bold text-slate-800">下载参数配置</h3>
-                  <p class="text-xs text-slate-400">配置本地下载根目录、多任务并发与单文件分片多线程加速</p>
-                </div>
+      <!-- 首次冷启动全屏初始化弹窗 -->
+      <div
+        v-if="categorySyncStatus.isSyncing && categorySyncStatus.isInitial"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md transition-all duration-300"
+      >
+        <div
+          class="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-lg w-full p-8 mx-4 space-y-6 animate-scale-in"
+        >
+          <!-- 头部动画与标题 -->
+          <div class="text-center space-y-3">
+            <div
+              class="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner border border-red-100"
+            >
+              <i
+                class="fa-solid fa-cloud-arrow-down text-3xl animate-bounce"
+              ></i>
+            </div>
+            <h3 class="text-xl font-bold text-slate-900 tracking-tight">
+              首次启动 · 正在同步官方产品分类树
+            </h3>
+            <p class="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
+              正在从华为官网实时建立产品大类、二级产品线与 2000+
+              型号数据库，请稍候...
+            </p>
+          </div>
+
+          <!-- 进度条 -->
+          <div class="space-y-2">
+            <div
+              class="flex items-center justify-between text-xs font-semibold"
+            >
+              <span class="text-slate-700 flex items-center">
+                <i
+                  class="fa-solid fa-spinner animate-spin text-red-500 mr-1.5"
+                ></i>
+                {{ categorySyncStatus.currentLineName ? '正在收录: ' +
+                categorySyncStatus.currentLineName : '正在连接华为官网...' }}
+              </span>
+              <span class="text-red-600 font-mono font-bold">
+                {{ categorySyncPercentage }}%
+              </span>
+            </div>
+            <div
+              class="w-full bg-slate-100 rounded-full h-3 overflow-hidden shadow-inner p-0.5 border border-slate-200"
+            >
+              <div
+                class="bg-gradient-to-r from-red-500 via-rose-500 to-red-600 h-full rounded-full transition-all duration-300 shadow-sm"
+                :style="{ width: categorySyncPercentage + '%' }"
+              ></div>
+            </div>
+          </div>
+
+          <!-- 实时数据看板 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div
+              class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 text-center"
+            >
+              <div class="text-[11px] text-slate-400 font-medium">
+                产品线处理进度
+              </div>
+              <div class="text-base font-bold text-slate-800 mt-1 font-mono">
+                {{ categorySyncStatus.currentLine }} / {{
+                categorySyncStatus.totalLines || 60 }}
               </div>
             </div>
-            <div class="p-6 space-y-5">
-              <!-- 下载目录 -->
-              <div>
-                <label class="block text-xs font-semibold text-slate-700 mb-1.5">文档下载保存根目录</label>
-                <input 
-                  type="text" 
-                  v-model="configForm.downloadDir" 
-                  class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-red-500">
-                <p class="text-xs text-slate-400 mt-1">下载的文件将存放在该目录，支持绝对路径（如 D:\HuaweiDocs）</p>
+            <div
+              class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 text-center"
+            >
+              <div class="text-[11px] text-slate-400 font-medium">
+                已收录产品型号
               </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- 最大并发下载文件数 -->
-                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <label class="block text-xs font-semibold text-slate-700">最大并发下载文件数 (1-10)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="configForm.maxConcurrent" 
-                    min="1" max="10"
-                    class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
-                  <p class="text-xs text-slate-400">同时下载的不同文档文件数量（建议 2~5，避免带宽占满或被限流）</p>
-                </div>
-
-                <!-- 单文件分片并发线程数 -->
-                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <label class="block text-xs font-semibold text-slate-700">单文件下载并发线程数 (1-32)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="configForm.fileThreads" 
-                    min="1" max="32"
-                    class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
-                  <p class="text-xs text-slate-400">单个文档的多线程分片下载数（默认为 1 单流；设置 2-32 可开启多分片并发加速下载）。</p>
-                </div>
+              <div class="text-base font-bold text-red-600 mt-1 font-mono">
+                {{ categorySyncStatus.totalProducts }} 个
               </div>
             </div>
           </div>
 
-          <!-- 2. 爬虫引擎配置 -->
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div class="flex items-center space-x-2">
-                <div class="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
-                  <i class="fa-solid fa-spider text-sm"></i>
-                </div>
-                <div>
-                  <h3 class="text-sm font-bold text-slate-800">爬虫引擎配置</h3>
-                  <p class="text-xs text-slate-400">控制爬虫并发工作线程数、接口请求延时、身份 Cookie 与分类树自动同步</p>
-                </div>
-              </div>
-            </div>
-            <div class="p-6 space-y-5">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- 爬虫并发工作线程数 -->
-                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <label class="block text-xs font-semibold text-slate-700">爬虫并发工作线程数 (1-32)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="configForm.crawlerThreads" 
-                    min="1" max="32"
-                    class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
-                  <p class="text-xs text-slate-400">多线程爬取各产品型号与文档树（默认为 1 线程；设置 2-32 时日志将显示 [爬虫-1] ~ [爬虫-N] 工作标示）。</p>
-                </div>
-
-                <!-- 爬虫请求间隔延迟 -->
-                <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
-                  <label class="block text-xs font-semibold text-slate-700">爬虫请求间隔延迟 (毫秒)</label>
-                  <input 
-                    type="number" 
-                    v-model.number="configForm.requestDelayMs" 
-                    min="0" step="100"
-                    class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500">
-                  <p class="text-xs text-slate-400">爬取接口之间的等待时间，防止请求过快触发反爬</p>
-                </div>
-              </div>
-
-              <!-- 自定义 Cookie -->
-              <div>
-                <label class="block text-xs font-semibold text-slate-700 mb-1.5">自定义 Cookie (可选/推荐)</label>
-                <textarea 
-                  v-model="configForm.customCookie" 
-                  rows="2" 
-                  placeholder="若需抓取包含特定权限或完整文档列表，可在此粘贴您浏览器在 support.huawei.com 上的 Cookie..."
-                  class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"></textarea>
-                <p class="text-xs text-slate-400 mt-1">提示：在浏览器打开 support.huawei.com 按 F12 -> 复制请求中的 Cookie 粘贴至此即可。</p>
-              </div>
-
-              <!-- 启动时自动同步分类树 -->
-              <div class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <div>
-                  <div class="text-xs font-semibold text-slate-700">启动时自动同步产品分类树</div>
-                  <div class="text-xs text-slate-400 mt-0.5">每次启动程序时，自动在后台从华为官网更新产品大类、产品线与型号数据。</div>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                  <input type="checkbox" v-model="configForm.autoSyncCategories" class="sr-only peer">
-                  <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-red-600"></div>
-                </label>
-              </div>
-
-              <!-- 手动同步产品分类树 -->
-              <div class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <div>
-                  <div class="text-xs font-semibold text-slate-700">手动全量同步产品分类树</div>
-                  <div class="text-xs text-slate-400 mt-0.5">若华为官网有新产品系列发布，可在此立即触发全量分类与型号树拉取。</div>
-                </div>
-                <button 
-                  type="button" 
-                  @click="triggerManualCategorySync"
-                  :disabled="categorySyncStatus.isSyncing"
-                  class="px-4 py-2 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 rounded-lg text-xs font-semibold flex items-center transition border border-slate-300 shadow-xs">
-                  <i class="fa-solid fa-arrows-rotate mr-1.5" :class="categorySyncStatus.isSyncing ? 'animate-spin text-red-600' : ''"></i>
-                  {{ categorySyncStatus.isSyncing ? '正在同步中...' : '立即同步分类树' }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- 3. 系统与日志策略 -->
-          <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div class="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div class="flex items-center space-x-2">
-                <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
-                  <i class="fa-solid fa-sliders text-sm"></i>
-                </div>
-                <div>
-                  <h3 class="text-sm font-bold text-slate-800">系统与日志策略</h3>
-                  <p class="text-xs text-slate-400">控制系统日志等级与文件转储生命周期管理</p>
-                </div>
-              </div>
-            </div>
-            <div class="p-6 space-y-4">
-              <!-- 系统日志级别控制 -->
-              <div class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
-                <div>
-                  <div class="text-xs font-semibold text-slate-700">系统日志记录级别</div>
-                  <div class="text-xs text-slate-400 mt-0.5">控制输出并持久化到 log.log 的日志详细度，默认推荐为 INFO。</div>
-                </div>
-                <select 
-                  v-model="configForm.logLevel" 
-                  class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-xs">
-                  <option value="debug">DEBUG (详细调试信息)</option>
-                  <option value="info">INFO (常规运行信息 - 默认)</option>
-                  <option value="warn">WARN (警告信息)</option>
-                  <option value="error">ERROR (仅错误)</option>
-                </select>
-              </div>
-
-              <!-- 日志存储与生命周期说明卡片 -->
-              <div class="p-4 rounded-xl bg-slate-50/80 border border-slate-200 text-xs text-slate-500 space-y-1.5">
-                <div class="font-semibold text-slate-700 flex items-center">
-                  <i class="fa-solid fa-circle-info text-blue-500 mr-1.5"></i>
-                  日志自动转储与生命周期清理策略：
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1 text-slate-600">
-                  <div class="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <span class="font-semibold text-slate-700">启动转储：</span> 每次程序启动将旧 log.log 自动重命名为 YYYY-MM-DD_HH-mm-ss.log。
-                  </div>
-                  <div class="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <span class="font-semibold text-slate-700">容量上限：</span> 单文件 10MB 自动分卷滚动，日志总目录超过 1024MB 时按最旧优先淘汰。
-                  </div>
-                  <div class="bg-white p-2.5 rounded-lg border border-slate-200">
-                    <span class="font-semibold text-slate-700">超期清理：</span> 自动清理保留超过 180 天的历史日志文件，保障磁盘空间。
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 保存按钮固定栏 -->
-          <div class="flex items-center justify-between pt-2">
-            <button 
-              @click="saveSettings" 
-              class="px-8 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold shadow-md shadow-red-600/30 transition flex items-center">
-              <i class="fa-solid fa-floppy-disk mr-2"></i>
-              保存所有系统配置
-            </button>
-            <span class="text-xs text-slate-400">配置保存后即刻热更新生效，无需重启程序</span>
+          <!-- 底部温馨提示 -->
+          <div
+            class="p-3 bg-amber-50 rounded-xl border border-amber-100/80 flex items-start space-x-2.5 text-xs text-amber-800"
+          >
+            <i
+              class="fa-solid fa-lightbulb text-amber-500 mt-0.5 text-sm flex-shrink-0"
+            ></i>
+            <span class="leading-relaxed">
+              首次同步约耗时 5~10 秒，完成后将自动进入文档中心，无需刷新页面。
+            </span>
           </div>
         </div>
-
       </div>
-    </main>
 
-    <!-- 首次冷启动全屏初始化弹窗 -->
-    <div 
-      v-if="categorySyncStatus.isSyncing && categorySyncStatus.isInitial" 
-      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-md transition-all duration-300">
-      <div class="bg-white rounded-2xl shadow-2xl border border-slate-100 max-w-lg w-full p-8 mx-4 space-y-6 animate-scale-in">
-        
-        <!-- 头部动画与标题 -->
-        <div class="text-center space-y-3">
-          <div class="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner border border-red-100">
-            <i class="fa-solid fa-cloud-arrow-down text-3xl animate-bounce"></i>
-          </div>
-          <h3 class="text-xl font-bold text-slate-900 tracking-tight">
-            首次启动 · 正在同步官方产品分类树
-          </h3>
-          <p class="text-xs text-slate-500 leading-relaxed max-w-sm mx-auto">
-            正在从华为官网实时建立产品大类、二级产品线与 2000+ 型号数据库，请稍候...
-          </p>
-        </div>
-
-        <!-- 进度条 -->
-        <div class="space-y-2">
-          <div class="flex items-center justify-between text-xs font-semibold">
-            <span class="text-slate-700 flex items-center">
-              <i class="fa-solid fa-spinner animate-spin text-red-500 mr-1.5"></i>
-              {{ categorySyncStatus.currentLineName ? '正在收录: ' + categorySyncStatus.currentLineName : '正在连接华为官网...' }}
-            </span>
-            <span class="text-red-600 font-mono font-bold">
-              {{ categorySyncPercentage }}%
-            </span>
-          </div>
-          <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden shadow-inner p-0.5 border border-slate-200">
-            <div 
-              class="bg-gradient-to-r from-red-500 via-rose-500 to-red-600 h-full rounded-full transition-all duration-300 shadow-sm"
-              :style="{ width: categorySyncPercentage + '%' }">
-            </div>
-          </div>
-        </div>
-
-        <!-- 实时数据看板 -->
-        <div class="grid grid-cols-2 gap-3">
-          <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 text-center">
-            <div class="text-[11px] text-slate-400 font-medium">产品线处理进度</div>
-            <div class="text-base font-bold text-slate-800 mt-1 font-mono">
-              {{ categorySyncStatus.currentLine }} / {{ categorySyncStatus.totalLines || 60 }}
-            </div>
-          </div>
-          <div class="bg-slate-50 rounded-xl p-3.5 border border-slate-100 text-center">
-            <div class="text-[11px] text-slate-400 font-medium">已收录产品型号</div>
-            <div class="text-base font-bold text-red-600 mt-1 font-mono">
-              {{ categorySyncStatus.totalProducts }} 个
-            </div>
-          </div>
-        </div>
-
-        <!-- 底部温馨提示 -->
-        <div class="p-3 bg-amber-50 rounded-xl border border-amber-100/80 flex items-start space-x-2.5 text-xs text-amber-800">
-          <i class="fa-solid fa-lightbulb text-amber-500 mt-0.5 text-sm flex-shrink-0"></i>
-          <span class="leading-relaxed">
-            首次同步约耗时 5~10 秒，完成后将自动进入文档中心，无需刷新页面。
-          </span>
-        </div>
-
+      <!-- 全局轻提示 Toast -->
+      <div
+        v-if="toast.show"
+        class="fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center space-x-2 z-50 transition-all duration-300"
+        :class="toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'"
+      >
+        <i
+          :class="toast.type === 'error' ? 'fa-solid fa-circle-exclamation' : 'fa-solid fa-circle-check text-emerald-400'"
+        ></i>
+        <span>{{ toast.message }}</span>
       </div>
     </div>
 
-    <!-- 全局轻提示 Toast -->
-    <div 
-      v-if="toast.show" 
-      class="fixed bottom-6 right-6 px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center space-x-2 z-50 transition-all duration-300"
-      :class="toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white'">
-      <i :class="toast.type === 'error' ? 'fa-solid fa-circle-exclamation' : 'fa-solid fa-circle-check text-emerald-400'"></i>
-      <span>{{ toast.message }}</span>
-    </div>
+    <script>
+      const { createApp, ref, computed, onMounted, nextTick } = Vue;
 
-  </div>
+      createApp({
+        setup() {
+          const activeTab = ref("docs");
+          const wsConnected = ref(false);
+          const scanning = ref(false);
+          const crawlerRunning = ref(false);
+          const loadingDocs = ref(false);
+          const lastScanResult = ref(null);
 
-  <script>
-    const { createApp, ref, computed, onMounted, nextTick } = Vue;
+          // 爬虫控制与日志
+          const crawlerScope = ref({
+            categoryId: "",
+            lineId: "",
+            productId: "",
+          });
+          const crawlerLines = ref([]);
+          const crawlerProducts = ref([]);
+          const crawlerLogs = ref([]);
+          const crawlerProgress = ref({ current: 0, total: 0, item: "" });
+          const logContainer = ref(null);
 
-    createApp({
-      setup() {
-        const activeTab = ref('docs');
-        const wsConnected = ref(false);
-        const scanning = ref(false);
-        const crawlerRunning = ref(false);
-        const loadingDocs = ref(false);
-        const lastScanResult = ref(null);
+          // 分类树同步状态
+          const categorySyncStatus = ref({
+            isSyncing: false,
+            isInitial: false,
+            currentLine: 0,
+            totalLines: 0,
+            currentLineName: "",
+            totalProducts: 0,
+            totalCategories: 0,
+          });
 
-        // 爬虫控制与日志
-        const crawlerScope = ref({ categoryId: '', lineId: '', productId: '' });
-        const crawlerLines = ref([]);
-        const crawlerProducts = ref([]);
-        const crawlerLogs = ref([]);
-        const crawlerProgress = ref({ current: 0, total: 0, item: '' });
-        const logContainer = ref(null);
+          // 统计数据
+          const stats = ref({
+            categories: 0,
+            lines: 0,
+            products: 0,
+            documents: 0,
+            downloaded: 0,
+            tasks: 0,
+          });
 
-        // 分类树同步状态
-        const categorySyncStatus = ref({
-          isSyncing: false,
-          isInitial: false,
-          currentLine: 0,
-          totalLines: 0,
-          currentLineName: '',
-          totalProducts: 0,
-          totalCategories: 0
-        });
+          // 筛选与联动数据
+          const categories = ref([]);
+          const currentProductLines = ref([]);
+          const products = ref([]);
+          const docList = ref([]);
+          const selectedNIDs = ref([]);
 
-        // 统计数据
-        const stats = ref({ categories: 0, lines: 0, products: 0, documents: 0, downloaded: 0, tasks: 0 });
+          const filters = ref({
+            categoryId: "",
+            productLineId: "",
+            productId: "",
+            versionId: "",
+            subModelId: "",
+            docType: "ALL",
+            docCategory: "ALL",
+            isDownloaded: "",
+            keyword: "",
+          });
 
-        // 筛选与联动数据
-        const categories = ref([]);
-        const currentProductLines = ref([]);
-        const products = ref([]);
-        const docList = ref([]);
-        const selectedNIDs = ref([]);
+          const availableDocCategories = ref([
+            "产品文档包",
+            "资料书架",
+            "方案概述",
+            "特性描述",
+            "产品概述",
+            "版本说明书",
+            "补丁说明书",
+            "快速入门",
+            "硬件安装指南",
+            "配置指南",
+            "技术指导",
+            "故障处理",
+            "告警处理",
+            "维护宝典",
+            "通信矩阵",
+            "日志参考",
+            "命令参考",
+            "MIB参考",
+            "API参考",
+            "开发指南",
+            "培训多媒体",
+          ]);
 
-        const filters = ref({
-          categoryId: '',
-          productLineId: '',
-          productId: '',
-          versionId: '',
-          subModelId: '',
-          docType: 'ALL',
-          docCategory: 'ALL',
-          isDownloaded: '',
-          keyword: ''
-        });
+          const docPagination = ref({ page: 1, pageSize: 20, total: 0 });
 
-        const availableDocCategories = ref([
-          '产品文档包', '资料书架', '方案概述', '特性描述', '产品概述',
-          '版本说明书', '补丁说明书', '快速入门', '硬件安装指南', '配置指南',
-          '技术指导', '故障处理', '告警处理', '维护宝典', '通信矩阵',
-          '日志参考', '命令参考', 'MIB参考', 'API参考', '开发指南', '培训多媒体'
-        ]);
+          // 下载任务与配置
+          const downloadTasks = ref([]);
+          const config = ref({
+            downloadDir: "",
+            maxConcurrent: 3,
+            fileThreads: 1,
+            crawlerThreads: 1,
+            requestDelayMs: 500,
+            customCookie: "",
+            autoSyncCategories: true,
+            logLevel: "warn",
+          });
+          const configForm = ref({
+            downloadDir: "",
+            maxConcurrent: 3,
+            fileThreads: 1,
+            crawlerThreads: 1,
+            requestDelayMs: 500,
+            customCookie: "",
+            autoSyncCategories: true,
+            logLevel: "warn",
+          });
 
-        const docPagination = ref({ page: 1, pageSize: 20, total: 0 });
-
-        // 下载任务与配置
-        const downloadTasks = ref([]);
-        const config = ref({ downloadDir: '', maxConcurrent: 3, fileThreads: 1, crawlerThreads: 1, requestDelayMs: 500, customCookie: '', autoSyncCategories: true, logLevel: 'warn' });
-        const configForm = ref({ downloadDir: '', maxConcurrent: 3, fileThreads: 1, crawlerThreads: 1, requestDelayMs: 500, customCookie: '', autoSyncCategories: true, logLevel: 'warn' });
-
-        // Toast
-        const toast = ref({ show: false, message: '', type: 'success' });
-        const showToast = (msg, type = 'success') => {
-          toast.value = { show: true, message: msg, type };
-          setTimeout(() => toast.value.show = false, 3500);
-        };
-
-        const tabTitle = computed(() => {
-          const map = {
-            docs: '文档下载中心',
-            downloads: '下载任务管理',
-            scanner: '本地文档库与扫描',
-            crawler: '官网爬虫中心',
-            settings: '系统参数配置'
+          // Toast
+          const toast = ref({ show: false, message: "", type: "success" });
+          const showToast = (msg, type = "success") => {
+            toast.value = { show: true, message: msg, type };
+            setTimeout(() => (toast.value.show = false), 3500);
           };
-          return map[activeTab.value] || '文档中心';
-        });
 
-        const activeDownloadCount = computed(() => {
-          return downloadTasks.value.filter(t => t.status === 1 || t.status === 0).length;
-        });
+          const tabTitle = computed(() => {
+            const map = {
+              docs: "文档下载中心",
+              downloads: "下载任务管理",
+              scanner: "本地文档库与扫描",
+              crawler: "爬虫中心",
+              settings: "系统参数配置",
+            };
+            return map[activeTab.value] || "文档中心";
+          });
 
-        const isAllSelected = computed(() => {
-          return docList.value.length > 0 && docList.value.every(d => selectedNIDs.value.includes(d.nid));
-        });
+          const activeDownloadCount = computed(() => {
+            return downloadTasks.value.filter(
+              (t) => t.status === 1 || t.status === 0,
+            ).length;
+          });
 
-        const categorySyncPercentage = computed(() => {
-          if (!categorySyncStatus.value.totalLines || categorySyncStatus.value.totalLines === 0) {
-            return categorySyncStatus.value.isSyncing ? 5 : 0;
-          }
-          const p = Math.round((categorySyncStatus.value.currentLine / categorySyncStatus.value.totalLines) * 100);
-          return Math.min(Math.max(p, 5), 100);
-        });
+          const isAllSelected = computed(() => {
+            return (
+              docList.value.length > 0 &&
+              docList.value.every((d) => selectedNIDs.value.includes(d.nid))
+            );
+          });
 
-        const canStartScopedCrawl = computed(() => {
-          return !!(crawlerScope.value.categoryId || crawlerScope.value.lineId || crawlerScope.value.productId);
-        });
-
-        const crawlerTargetDesc = computed(() => {
-          if (crawlerScope.value.productId) {
-            const p = crawlerProducts.value.find(x => x.id === crawlerScope.value.productId);
-            return `单个型号【${p ? p.name : crawlerScope.value.productId}】`;
-          }
-          if (crawlerScope.value.lineId) {
-            const l = crawlerLines.value.find(x => x.id === crawlerScope.value.lineId);
-            return `产品线【${l ? l.name : crawlerScope.value.lineId}】下所有型号`;
-          }
-          if (crawlerScope.value.categoryId) {
-            const c = categories.value.find(x => x.id === crawlerScope.value.categoryId);
-            return `大类【${c ? c.name : crawlerScope.value.categoryId}】下所有产品线及型号`;
-          }
-          return '请在上方选择大类、产品线或型号';
-        });
-
-        const scopedCrawlButtonText = computed(() => {
-          if (crawlerScope.value.productId) {
-            const p = crawlerProducts.value.find(x => x.id === crawlerScope.value.productId);
-            return `开始爬取型号: ${p ? p.name : ''}`;
-          }
-          if (crawlerScope.value.lineId) {
-            const l = crawlerLines.value.find(x => x.id === crawlerScope.value.lineId);
-            return `开始爬取产品线: ${l ? l.name : ''}`;
-          }
-          if (crawlerScope.value.categoryId) {
-            const c = categories.value.find(x => x.id === crawlerScope.value.categoryId);
-            return `开始爬取大类: ${c ? c.name : ''}`;
-          }
-          return '请选择定向爬取范围';
-        });
-
-        // ---------------- API 请求 ----------------
-        const fetchCategories = async () => {
-          try {
-            const res = await fetch('/api/categories').then(r => r.json());
-            if (res.code === 0) {
-              categories.value = res.data || [];
+          const categorySyncPercentage = computed(() => {
+            if (
+              !categorySyncStatus.value.totalLines ||
+              categorySyncStatus.value.totalLines === 0
+            ) {
+              return categorySyncStatus.value.isSyncing ? 5 : 0;
             }
-          } catch (e) {
-            console.error(e);
-          }
-        };
+            const p = Math.round(
+              (categorySyncStatus.value.currentLine /
+                categorySyncStatus.value.totalLines) *
+                100,
+            );
+            return Math.min(Math.max(p, 5), 100);
+          });
 
-        const fetchDocCategories = async () => {
-          try {
-            const params = new URLSearchParams();
-            if (filters.value.productId) params.append('productId', filters.value.productId);
-            if (filters.value.productLineId) params.append('lineId', filters.value.productLineId);
-            if (filters.value.categoryId) params.append('categoryId', filters.value.categoryId);
-            const res = await fetch(`/api/doc-categories?${params.toString()}`).then(r => r.json());
-            if (res.code === 0 && res.data && res.data.length > 0) {
-              const set = new Set([...res.data, ...availableDocCategories.value]);
-              availableDocCategories.value = Array.from(set);
+          const canStartScopedCrawl = computed(() => {
+            return !!(
+              crawlerScope.value.categoryId ||
+              crawlerScope.value.lineId ||
+              crawlerScope.value.productId
+            );
+          });
+
+          const crawlerTargetDesc = computed(() => {
+            if (crawlerScope.value.productId) {
+              const p = crawlerProducts.value.find(
+                (x) => x.id === crawlerScope.value.productId,
+              );
+              return `单个型号【${p ? p.name : crawlerScope.value.productId}】`;
             }
-          } catch (e) {}
-        };
+            if (crawlerScope.value.lineId) {
+              const l = crawlerLines.value.find(
+                (x) => x.id === crawlerScope.value.lineId,
+              );
+              return `产品线【${l ? l.name : crawlerScope.value.lineId}】下所有型号`;
+            }
+            if (crawlerScope.value.categoryId) {
+              const c = categories.value.find(
+                (x) => x.id === crawlerScope.value.categoryId,
+              );
+              return `大类【${c ? c.name : crawlerScope.value.categoryId}】下所有产品线及型号`;
+            }
+            return "请在上方选择大类、产品线或型号";
+          });
 
-        const onCategoryChange = () => {
-          const cat = categories.value.find(c => c.id === filters.value.categoryId);
-          currentProductLines.value = cat ? (cat.lines || []) : [];
-          filters.value.productLineId = '';
-          filters.value.productId = '';
-          filters.value.docCategory = 'ALL';
-          products.value = [];
-          fetchDocCategories();
-          loadDocuments();
-        };
+          const scopedCrawlButtonText = computed(() => {
+            if (crawlerScope.value.productId) {
+              const p = crawlerProducts.value.find(
+                (x) => x.id === crawlerScope.value.productId,
+              );
+              return `开始爬取型号: ${p ? p.name : ""}`;
+            }
+            if (crawlerScope.value.lineId) {
+              const l = crawlerLines.value.find(
+                (x) => x.id === crawlerScope.value.lineId,
+              );
+              return `开始爬取产品线: ${l ? l.name : ""}`;
+            }
+            if (crawlerScope.value.categoryId) {
+              const c = categories.value.find(
+                (x) => x.id === crawlerScope.value.categoryId,
+              );
+              return `开始爬取大类: ${c ? c.name : ""}`;
+            }
+            return "请选择定向爬取范围";
+          });
 
-        const onProductLineChange = async () => {
-          filters.value.productId = '';
-          filters.value.docCategory = 'ALL';
-          products.value = [];
-          if (filters.value.productLineId) {
+          // ---------------- API 请求 ----------------
+          const fetchCategories = async () => {
             try {
-              const res = await fetch(`/api/products?lineId=${filters.value.productLineId}`).then(r => r.json());
+              const res = await fetch("/api/categories").then((r) => r.json());
               if (res.code === 0) {
-                products.value = res.data || [];
+                categories.value = res.data || [];
               }
             } catch (e) {
               console.error(e);
             }
-          }
-          fetchDocCategories();
-          loadDocuments();
-        };
+          };
 
-        const onProductChange = () => {
-          fetchDocCategories();
-          loadDocuments();
-        };
+          const fetchDocCategories = async () => {
+            try {
+              const params = new URLSearchParams();
+              if (filters.value.productId)
+                params.append("productId", filters.value.productId);
+              if (filters.value.productLineId)
+                params.append("lineId", filters.value.productLineId);
+              if (filters.value.categoryId)
+                params.append("categoryId", filters.value.categoryId);
+              const res = await fetch(
+                `/api/doc-categories?${params.toString()}`,
+              ).then((r) => r.json());
+              if (res.code === 0 && res.data && res.data.length > 0) {
+                const set = new Set([
+                  ...res.data,
+                  ...availableDocCategories.value,
+                ]);
+                availableDocCategories.value = Array.from(set);
+              }
+            } catch (e) {}
+          };
 
-        const setDocTypeFilter = (type) => {
-          filters.value.docType = type;
-          docPagination.value.page = 1;
-          loadDocuments();
-        };
+          const onCategoryChange = () => {
+            const cat = categories.value.find(
+              (c) => c.id === filters.value.categoryId,
+            );
+            currentProductLines.value = cat ? cat.lines || [] : [];
+            filters.value.productLineId = "";
+            filters.value.productId = "";
+            filters.value.docCategory = "ALL";
+            products.value = [];
+            fetchDocCategories();
+            loadDocuments();
+          };
 
-        const setDocCategoryFilter = (catTag) => {
-          filters.value.docCategory = catTag;
-          docPagination.value.page = 1;
-          loadDocuments();
-        };
+          const onProductLineChange = async () => {
+            filters.value.productId = "";
+            filters.value.docCategory = "ALL";
+            products.value = [];
+            if (filters.value.productLineId) {
+              try {
+                const res = await fetch(
+                  `/api/products?lineId=${filters.value.productLineId}`,
+                ).then((r) => r.json());
+                if (res.code === 0) {
+                  products.value = res.data || [];
+                }
+              } catch (e) {
+                console.error(e);
+              }
+            }
+            fetchDocCategories();
+            loadDocuments();
+          };
 
-        let searchTimer = null;
-        const debounceSearch = () => {
-          clearTimeout(searchTimer);
-          searchTimer = setTimeout(() => {
+          const onProductChange = () => {
+            fetchDocCategories();
+            loadDocuments();
+          };
+
+          const setDocTypeFilter = (type) => {
+            filters.value.docType = type;
             docPagination.value.page = 1;
             loadDocuments();
-          }, 300);
-        };
-
-        const resetFilters = () => {
-          filters.value = {
-            categoryId: '',
-            productLineId: '',
-            productId: '',
-            versionId: '',
-            subModelId: '',
-            docType: 'ALL',
-            docCategory: 'ALL',
-            isDownloaded: '',
-            keyword: ''
           };
-          currentProductLines.value = [];
-          products.value = [];
-          docPagination.value.page = 1;
-          fetchDocCategories();
-          loadDocuments();
-        };
 
-        const loadDocuments = async () => {
-          loadingDocs.value = true;
-          try {
-            const params = new URLSearchParams({
-              page: docPagination.value.page,
-              pageSize: docPagination.value.pageSize,
-              categoryId: filters.value.categoryId,
-              productLineId: filters.value.productLineId,
-              productId: filters.value.productId,
-              docType: filters.value.docType,
-              keyword: filters.value.keyword
-            });
-            if (filters.value.docCategory && filters.value.docCategory !== 'ALL') {
-              params.append('docCategory', filters.value.docCategory);
-            }
-            if (filters.value.isDownloaded !== '') {
-              params.append('isDownloaded', filters.value.isDownloaded);
-            }
-            const res = await fetch(`/api/documents?${params}`).then(r => r.json());
-            if (res.code === 0 && res.data) {
-              docList.value = res.data.items || [];
-              docPagination.value.total = res.data.total || 0;
-            }
-          } catch (e) {
-            showToast('加载文档列表失败: ' + e.message, 'error');
-          } finally {
-            loadingDocs.value = false;
-          }
-        };
+          const setDocCategoryFilter = (catTag) => {
+            filters.value.docCategory = catTag;
+            docPagination.value.page = 1;
+            loadDocuments();
+          };
 
-        const changePage = (newPage) => {
-          docPagination.value.page = newPage;
-          loadDocuments();
-        };
-
-        const toggleSelectAll = () => {
-          if (isAllSelected.value) {
-            selectedNIDs.value = [];
-          } else {
-            selectedNIDs.value = docList.value.map(d => d.nid);
-          }
-        };
-
-        // ---------------- 下载管理 ----------------
-        const startDownloadSingle = async (doc) => {
-          try {
-            const res = await fetch('/api/download', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ nids: [doc.nid] })
-            }).then(r => r.json());
-            if (res.code === 0) {
-              showToast(`已加入下载队列: ${doc.name}`);
-              loadTasks();
-            } else {
-              showToast(res.message, 'error');
-            }
-          } catch (e) {
-            showToast('添加下载失败: ' + e.message, 'error');
-          }
-        };
-
-        const batchDownloadSelected = async () => {
-          if (selectedNIDs.value.length === 0) return;
-          try {
-            const res = await fetch('/api/download', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ nids: selectedNIDs.value })
-            }).then(r => r.json());
-            if (res.code === 0) {
-              showToast(`已批量添加 ${res.data.addedCount} 个下载任务`);
-              selectedNIDs.value = [];
-              loadTasks();
-              activeTab.value = 'downloads';
-            } else {
-              showToast(res.message, 'error');
-            }
-          } catch (e) {
-            showToast('批量下载失败: ' + e.message, 'error');
-          }
-        };
-
-        const loadTasks = async () => {
-          try {
-            const res = await fetch('/api/tasks').then(r => r.json());
-            if (res.code === 0) {
-              downloadTasks.value = res.data || [];
-            }
-          } catch (e) {
-            console.error(e);
-          }
-        };
-
-        const pauseTask = async (id) => {
-          await fetch(`/api/tasks/${id}/pause`, { method: 'POST' });
-          loadTasks();
-        };
-
-        const resumeTask = async (id) => {
-          await fetch(`/api/tasks/${id}/resume`, { method: 'POST' });
-          loadTasks();
-        };
-
-        const deleteTask = async (id) => {
-          await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
-          loadTasks();
-        };
-
-        // ---------------- 本地扫描 ----------------
-        const triggerScan = async () => {
-          scanning.value = true;
-          try {
-            const res = await fetch('/api/scan', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ dirPath: config.value.downloadDir })
-            }).then(r => r.json());
-            if (res.code === 0) {
-              lastScanResult.value = res.data;
-              showToast(`扫描完成！识别已下载 ${res.data.matchedDocsCount} 篇文档`);
-              fetchStats();
+          let searchTimer = null;
+          const debounceSearch = () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+              docPagination.value.page = 1;
               loadDocuments();
-            } else {
-              showToast(res.message, 'error');
-            }
-          } catch (e) {
-            showToast('扫描异常: ' + e.message, 'error');
-          } finally {
-            scanning.value = false;
-          }
-        };
+            }, 300);
+          };
 
-        // ---------------- 爬虫中心 ----------------
-        const startFullCrawl = async () => {
-          try {
-            const res = await fetch('/api/crawl/start', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({})
-            }).then(r => r.json());
-            if (res.code === 0) {
-              crawlerRunning.value = true;
-              showToast('已启动华为官网全量深度文档爬取！');
-            } else {
-              showToast(res.message, 'error');
-            }
-          } catch (e) {
-            showToast('启动爬虫失败: ' + e.message, 'error');
-          }
-        };
+          const resetFilters = () => {
+            filters.value = {
+              categoryId: "",
+              productLineId: "",
+              productId: "",
+              versionId: "",
+              subModelId: "",
+              docType: "ALL",
+              docCategory: "ALL",
+              isDownloaded: "",
+              keyword: "",
+            };
+            currentProductLines.value = [];
+            products.value = [];
+            docPagination.value.page = 1;
+            fetchDocCategories();
+            loadDocuments();
+          };
 
-        const onCrawlerCategoryChange = () => {
-          const cat = categories.value.find(c => c.id === crawlerScope.value.categoryId);
-          crawlerLines.value = cat ? (cat.lines || []) : [];
-          crawlerScope.value.lineId = '';
-          crawlerScope.value.productId = '';
-          crawlerProducts.value = [];
-        };
-
-        const onCrawlerLineChange = async () => {
-          crawlerScope.value.productId = '';
-          crawlerProducts.value = [];
-          if (crawlerScope.value.lineId) {
+          const loadDocuments = async () => {
+            loadingDocs.value = true;
             try {
-              const res = await fetch(`/api/products?lineId=${crawlerScope.value.lineId}`).then(r => r.json());
+              const params = new URLSearchParams({
+                page: docPagination.value.page,
+                pageSize: docPagination.value.pageSize,
+                categoryId: filters.value.categoryId,
+                productLineId: filters.value.productLineId,
+                productId: filters.value.productId,
+                docType: filters.value.docType,
+                keyword: filters.value.keyword,
+              });
+              if (
+                filters.value.docCategory &&
+                filters.value.docCategory !== "ALL"
+              ) {
+                params.append("docCategory", filters.value.docCategory);
+              }
+              if (filters.value.isDownloaded !== "") {
+                params.append("isDownloaded", filters.value.isDownloaded);
+              }
+              const res = await fetch(`/api/documents?${params}`).then((r) =>
+                r.json(),
+              );
+              if (res.code === 0 && res.data) {
+                docList.value = res.data.items || [];
+                docPagination.value.total = res.data.total || 0;
+              }
+            } catch (e) {
+              showToast("加载文档列表失败: " + e.message, "error");
+            } finally {
+              loadingDocs.value = false;
+            }
+          };
+
+          const changePage = (newPage) => {
+            docPagination.value.page = newPage;
+            loadDocuments();
+          };
+
+          const toggleSelectAll = () => {
+            if (isAllSelected.value) {
+              selectedNIDs.value = [];
+            } else {
+              selectedNIDs.value = docList.value.map((d) => d.nid);
+            }
+          };
+
+          // ---------------- 下载管理 ----------------
+          const startDownloadSingle = async (doc) => {
+            try {
+              const res = await fetch("/api/download", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nids: [doc.nid] }),
+              }).then((r) => r.json());
               if (res.code === 0) {
-                crawlerProducts.value = res.data || [];
+                showToast(`已加入下载队列: ${doc.name}`);
+                loadTasks();
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("添加下载失败: " + e.message, "error");
+            }
+          };
+
+          const batchDownloadSelected = async () => {
+            if (selectedNIDs.value.length === 0) return;
+            try {
+              const res = await fetch("/api/download", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nids: selectedNIDs.value }),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                showToast(`已批量添加 ${res.data.addedCount} 个下载任务`);
+                selectedNIDs.value = [];
+                loadTasks();
+                activeTab.value = "downloads";
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("批量下载失败: " + e.message, "error");
+            }
+          };
+
+          const loadTasks = async () => {
+            try {
+              const res = await fetch("/api/tasks").then((r) => r.json());
+              if (res.code === 0) {
+                downloadTasks.value = res.data || [];
               }
             } catch (e) {
               console.error(e);
             }
-          }
-        };
-
-        const startScopedCrawl = async () => {
-          if (!canStartScopedCrawl.value) return;
-          try {
-            const res = await fetch('/api/crawl/start', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                categoryId: crawlerScope.value.categoryId,
-                lineId: crawlerScope.value.lineId,
-                productId: crawlerScope.value.productId
-              })
-            }).then(r => r.json());
-            if (res.code === 0) {
-              crawlerRunning.value = true;
-              showToast(`已启动 ${crawlerTargetDesc.value} 定向爬取任务！`);
-            } else {
-              showToast(res.message, 'error');
-            }
-          } catch (e) {
-            showToast('启动定向爬取失败: ' + e.message, 'error');
-          }
-        };
-
-        const stopCrawler = async () => {
-          try {
-            await fetch('/api/crawl/stop', { method: 'POST' });
-            crawlerRunning.value = false;
-            showToast('已发送停止爬虫指令');
-          } catch (e) {
-            console.error(e);
-          }
-        };
-
-        // ---------------- 设置与系统 ----------------
-        const loadSettings = async () => {
-          try {
-            const res = await fetch('/api/settings').then(r => r.json());
-            if (res.code === 0 && res.data) {
-              config.value = res.data;
-              configForm.value = { ...res.data };
-            }
-          } catch (e) {
-            console.error(e);
-          }
-        };
-
-        const saveSettings = async () => {
-          try {
-            const res = await fetch('/api/settings', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(configForm.value)
-            }).then(r => r.json());
-            if (res.code === 0) {
-              config.value = res.data;
-              showToast('系统配置保存成功！');
-            } else {
-              showToast(res.message, 'error');
-            }
-          } catch (e) {
-            showToast('保存失败: ' + e.message, 'error');
-          }
-        };
-
-        const openLocalFolder = async (path) => {
-          if (!path) return;
-          try {
-            await fetch('/api/open-folder', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ path })
-            });
-          } catch (e) {
-            console.error(e);
-          }
-        };
-
-        const fetchStats = async () => {
-          try {
-            const res = await fetch('/api/statistics').then(r => r.json());
-            if (res.code === 0) {
-              stats.value = res.data || {};
-            }
-          } catch (e) {
-            console.error(e);
-          }
-        };
-
-        // ---------------- WebSocket 实时连接 ----------------
-        const initWebSocket = () => {
-          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const wsUrl = `${protocol}//${window.location.host}/ws`;
-          const ws = new WebSocket(wsUrl);
-
-          ws.onopen = () => {
-            wsConnected.value = true;
           };
 
-          ws.onmessage = (e) => {
+          const pauseTask = async (id) => {
+            await fetch(`/api/tasks/${id}/pause`, { method: "POST" });
+            loadTasks();
+          };
+
+          const resumeTask = async (id) => {
+            await fetch(`/api/tasks/${id}/resume`, { method: "POST" });
+            loadTasks();
+          };
+
+          const deleteTask = async (id) => {
+            await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+            loadTasks();
+          };
+
+          // ---------------- 本地扫描 ----------------
+          const triggerScan = async () => {
+            scanning.value = true;
             try {
-              const msg = JSON.parse(e.data);
-              if (msg.type === 'DOWNLOAD_PROGRESS' && msg.data) {
-                const event = msg.data;
-                const idx = downloadTasks.value.findIndex(t => t.id === event.taskId);
-                if (idx !== -1) {
-                  downloadTasks.value[idx].progress = event.progress;
-                  downloadTasks.value[idx].speedStr = event.speedStr;
-                  downloadTasks.value[idx].status = event.status;
-                  downloadTasks.value[idx].downloadedBytes = event.downloadedBytes;
-                  downloadTasks.value[idx].totalBytes = event.totalBytes;
-                } else {
-                  loadTasks();
-                }
-
-                if (event.status === 2) {
-                  const doc = docList.value.find(d => d.nid === event.docNid);
-                  if (doc) {
-                    doc.isDownloaded = 1;
-                    doc.localPath = event.savePath;
-                  }
-                  fetchStats();
-                }
-              } else if (msg.type === 'CRAWLER_LOG' && msg.data) {
-                crawlerLogs.value.push(msg.data);
-                if (crawlerLogs.value.length > 500) crawlerLogs.value.shift();
-                nextTick(() => {
-                  if (logContainer.value) {
-                    logContainer.value.scrollTop = logContainer.value.scrollHeight;
-                  }
-                });
-                fetchStats();
-                fetchCategories();
-                loadDocuments();
-              } else if (msg.type === 'CRAWLER_PROGRESS' && msg.data) {
-                crawlerProgress.value = msg.data;
-              } else if (msg.type === 'CRAWLER_FINISHED') {
-                crawlerRunning.value = false;
-                crawlerProgress.value = { current: 0, total: 0, item: '' };
-                fetchStats();
-                fetchCategories();
-                loadDocuments();
-              } else if (msg.type === 'CATEGORY_SYNC_PROGRESS' && msg.data) {
-                categorySyncStatus.value = msg.data;
-              } else if (msg.type === 'CATEGORY_SYNC_FINISHED') {
-                const data = msg.data || {};
-                categorySyncStatus.value.isSyncing = false;
-                showToast(`🎉 产品分类树同步完成！共收录 ${data.totalCategories || 12} 个大类，${data.totalLines || 60} 条产品线，${data.totalProducts || 2000} 个产品型号`);
-                fetchCategories();
-                fetchDocCategories();
+              const res = await fetch("/api/scan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dirPath: config.value.downloadDir }),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                lastScanResult.value = res.data;
+                showToast(
+                  `扫描完成！识别已下载 ${res.data.matchedDocsCount} 篇文档`,
+                );
                 fetchStats();
                 loadDocuments();
+              } else {
+                showToast(res.message, "error");
               }
-            } catch (err) {
-              console.error(err);
+            } catch (e) {
+              showToast("扫描异常: " + e.message, "error");
+            } finally {
+              scanning.value = false;
             }
           };
 
-          ws.onclose = () => {
-            wsConnected.value = false;
-            setTimeout(initWebSocket, 3000);
+          // ---------------- 爬虫中心 ----------------
+          const startFullCrawl = async () => {
+            try {
+              const res = await fetch("/api/crawl/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({}),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                crawlerRunning.value = true;
+                showToast("已启动华为官网全量深度文档爬取！");
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("启动爬虫失败: " + e.message, "error");
+            }
           };
-        };
 
-        // ---------------- 样式与工具函数 ----------------
-        const getDocTypeBadgeClass = (type) => {
-          const t = (type || '').toUpperCase();
-          switch (t) {
-            case 'HDX':
-              return 'bg-red-100 text-red-700 border border-red-200';
-            case 'CHM':
-              return 'bg-blue-100 text-blue-700 border border-blue-200';
-            case 'PDF':
-              return 'bg-amber-100 text-amber-700 border border-amber-200';
-            case 'ZIP':
-              return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
-            case '多媒体':
-              return 'bg-purple-100 text-purple-700 border border-purple-200';
-            default:
-              return 'bg-slate-100 text-slate-700 border border-slate-200';
-          }
-        };
+          const onCrawlerCategoryChange = () => {
+            const cat = categories.value.find(
+              (c) => c.id === crawlerScope.value.categoryId,
+            );
+            crawlerLines.value = cat ? cat.lines || [] : [];
+            crawlerScope.value.lineId = "";
+            crawlerScope.value.productId = "";
+            crawlerProducts.value = [];
+          };
 
-        const getDocIcon = (type) => {
-          const t = (type || '').toUpperCase();
-          switch (t) {
-            case 'HDX':
-              return 'fa-solid fa-file-shield text-red-600';
-            case 'CHM':
-              return 'fa-solid fa-file-code text-blue-600';
-            case 'PDF':
-              return 'fa-solid fa-file-pdf text-amber-600';
-            case 'ZIP':
-              return 'fa-solid fa-file-zipper text-emerald-600';
-            case '多媒体':
-              return 'fa-solid fa-photo-film text-purple-600';
-            default:
-              return 'fa-solid fa-file-lines text-slate-500';
-          }
-        };
-
-        const getTaskStatusBadgeClass = (status) => {
-          switch (status) {
-            case 1: return 'bg-blue-100 text-blue-700 animate-pulse';
-            case 2: return 'bg-emerald-100 text-emerald-700';
-            case 3: return 'bg-red-100 text-red-700';
-            case 4: return 'bg-amber-100 text-amber-700';
-            default: return 'bg-slate-100 text-slate-700';
-          }
-        };
-
-        const getTaskStatusStr = (status) => {
-          const map = { 0: '排队中', 1: '下载中', 2: '已完成', 3: '失败', 4: '已暂停', 5: '已取消' };
-          return map[status] || '未知';
-        };
-
-        const formatBytes = (bytes) => {
-          if (!bytes || bytes === 0) return '0 B';
-          const k = 1024;
-          const sizes = ['B', 'KB', 'MB', 'GB'];
-          const i = Math.floor(Math.log(bytes) / Math.log(k));
-          return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-        };
-
-        const checkCategorySyncStatus = async () => {
-          try {
-            const res = await fetch('/api/category-sync/status').then(r => r.json());
-            if (res.code === 0 && res.data) {
-              categorySyncStatus.value = res.data;
+          const onCrawlerLineChange = async () => {
+            crawlerScope.value.productId = "";
+            crawlerProducts.value = [];
+            if (crawlerScope.value.lineId) {
+              try {
+                const res = await fetch(
+                  `/api/products?lineId=${crawlerScope.value.lineId}`,
+                ).then((r) => r.json());
+                if (res.code === 0) {
+                  crawlerProducts.value = res.data || [];
+                }
+              } catch (e) {
+                console.error(e);
+              }
             }
-          } catch (e) {}
-        };
+          };
 
-        const triggerManualCategorySync = async () => {
-          try {
-            const res = await fetch('/api/category-sync/start', { method: 'POST' }).then(r => r.json());
-            if (res.code === 0) {
-              categorySyncStatus.value.isSyncing = true;
-              categorySyncStatus.value.isInitial = false;
-              showToast('已开始从华为官网同步产品分类树...');
-            } else {
-              showToast(res.message, 'error');
+          const startScopedCrawl = async () => {
+            if (!canStartScopedCrawl.value) return;
+            try {
+              const res = await fetch("/api/crawl/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  categoryId: crawlerScope.value.categoryId,
+                  lineId: crawlerScope.value.lineId,
+                  productId: crawlerScope.value.productId,
+                }),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                crawlerRunning.value = true;
+                showToast(`已启动 ${crawlerTargetDesc.value} 定向爬取任务！`);
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("启动定向爬取失败: " + e.message, "error");
             }
-          } catch (e) {
-            showToast('触发同步失败: ' + e.message, 'error');
-          }
-        };
+          };
 
-        const checkCrawlStatus = async () => {
-          try {
-            const res = await fetch('/api/crawl/status').then(r => r.json());
-            if (res.code === 0 && res.data) {
-              crawlerRunning.value = res.data.isBusy;
+          const stopCrawler = async () => {
+            try {
+              await fetch("/api/crawl/stop", { method: "POST" });
+              crawlerRunning.value = false;
+              showToast("已发送停止爬虫指令");
+            } catch (e) {
+              console.error(e);
             }
-          } catch (e) {}
-        };
+          };
 
-        onMounted(async () => {
-          await loadSettings();
-          await fetchStats();
-          await fetchCategories();
-          await checkCategorySyncStatus();
-          await loadDocuments();
-          await loadTasks();
-          await checkCrawlStatus();
-          setInterval(checkCrawlStatus, 4000);
-          setInterval(checkCategorySyncStatus, 3000);
-          initWebSocket();
-        });
+          // ---------------- 设置与系统 ----------------
+          const loadSettings = async () => {
+            try {
+              const res = await fetch("/api/settings").then((r) => r.json());
+              if (res.code === 0 && res.data) {
+                config.value = res.data;
+                configForm.value = { ...res.data };
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          };
 
-        return {
-          activeTab,
-          tabTitle,
-          wsConnected,
-          scanning,
-          crawlerRunning,
-          loadingDocs,
-          categorySyncStatus,
-          categorySyncPercentage,
-          triggerManualCategorySync,
-          crawlerScope,
-          crawlerLines,
-          crawlerProducts,
-          canStartScopedCrawl,
-          crawlerTargetDesc,
-          scopedCrawlButtonText,
-          crawlerLogs,
-          crawlerProgress,
-          logContainer,
-          stats,
-          categories,
-          currentProductLines,
-          products,
-          docList,
-          selectedNIDs,
-          filters,
-          docPagination,
-          downloadTasks,
-          activeDownloadCount,
-          isAllSelected,
-          config,
-          configForm,
-          toast,
-          lastScanResult,
-          onCategoryChange,
-          onProductLineChange,
-          onProductChange,
-          onCrawlerCategoryChange,
-          onCrawlerLineChange,
-          setDocTypeFilter,
-          availableDocCategories,
-          setDocCategoryFilter,
-          debounceSearch,
-          resetFilters,
-          changePage,
-          toggleSelectAll,
-          startDownloadSingle,
-          batchDownloadSelected,
-          pauseTask,
-          resumeTask,
-          deleteTask,
-          triggerScan,
-          startFullCrawl,
-          startScopedCrawl,
-          stopCrawler,
-          saveSettings,
-          openLocalFolder,
-          getDocTypeBadgeClass,
-          getDocIcon,
-          getTaskStatusBadgeClass,
-          getTaskStatusStr,
-          formatBytes
-        };
-      }
-    }).mount('#app');
-  </script>
-</body>
+          const saveSettings = async () => {
+            try {
+              const res = await fetch("/api/settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(configForm.value),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                config.value = res.data;
+                showToast("系统配置保存成功！");
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("保存失败: " + e.message, "error");
+            }
+          };
+
+          const openLocalFolder = async (path) => {
+            if (!path) return;
+            try {
+              await fetch("/api/open-folder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path }),
+              });
+            } catch (e) {
+              console.error(e);
+            }
+          };
+
+          const fetchStats = async () => {
+            try {
+              const res = await fetch("/api/statistics").then((r) => r.json());
+              if (res.code === 0) {
+                stats.value = res.data || {};
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          };
+
+          // ---------------- WebSocket 实时连接 ----------------
+          const initWebSocket = () => {
+            const protocol =
+              window.location.protocol === "https:" ? "wss:" : "ws:";
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+              wsConnected.value = true;
+            };
+
+            ws.onmessage = (e) => {
+              try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === "DOWNLOAD_PROGRESS" && msg.data) {
+                  const event = msg.data;
+                  const idx = downloadTasks.value.findIndex(
+                    (t) => t.id === event.taskId,
+                  );
+                  if (idx !== -1) {
+                    downloadTasks.value[idx].progress = event.progress;
+                    downloadTasks.value[idx].speedStr = event.speedStr;
+                    downloadTasks.value[idx].status = event.status;
+                    downloadTasks.value[idx].downloadedBytes =
+                      event.downloadedBytes;
+                    downloadTasks.value[idx].totalBytes = event.totalBytes;
+                  } else {
+                    loadTasks();
+                  }
+
+                  if (event.status === 2) {
+                    const doc = docList.value.find(
+                      (d) => d.nid === event.docNid,
+                    );
+                    if (doc) {
+                      doc.isDownloaded = 1;
+                      doc.localPath = event.savePath;
+                    }
+                    fetchStats();
+                  }
+                } else if (msg.type === "CRAWLER_LOG" && msg.data) {
+                  crawlerLogs.value.push(msg.data);
+                  if (crawlerLogs.value.length > 500) crawlerLogs.value.shift();
+                  nextTick(() => {
+                    if (logContainer.value) {
+                      logContainer.value.scrollTop =
+                        logContainer.value.scrollHeight;
+                    }
+                  });
+                  fetchStats();
+                  fetchCategories();
+                  loadDocuments();
+                } else if (msg.type === "CRAWLER_PROGRESS" && msg.data) {
+                  crawlerProgress.value = msg.data;
+                } else if (msg.type === "CRAWLER_FINISHED") {
+                  crawlerRunning.value = false;
+                  crawlerProgress.value = { current: 0, total: 0, item: "" };
+                  fetchStats();
+                  fetchCategories();
+                  loadDocuments();
+                } else if (msg.type === "CATEGORY_SYNC_PROGRESS" && msg.data) {
+                  categorySyncStatus.value = msg.data;
+                } else if (msg.type === "CATEGORY_SYNC_FINISHED") {
+                  const data = msg.data || {};
+                  categorySyncStatus.value.isSyncing = false;
+                  showToast(
+                    `🎉 产品分类树同步完成！共收录 ${data.totalCategories || 12} 个大类，${data.totalLines || 60} 条产品线，${data.totalProducts || 2000} 个产品型号`,
+                  );
+                  fetchCategories();
+                  fetchDocCategories();
+                  fetchStats();
+                  loadDocuments();
+                }
+              } catch (err) {
+                console.error(err);
+              }
+            };
+
+            ws.onclose = () => {
+              wsConnected.value = false;
+              setTimeout(initWebSocket, 3000);
+            };
+          };
+
+          // ---------------- 样式与工具函数 ----------------
+          const getDocTypeBadgeClass = (type) => {
+            const t = (type || "").toUpperCase();
+            switch (t) {
+              case "HDX":
+                return "bg-red-100 text-red-700 border border-red-200";
+              case "CHM":
+                return "bg-blue-100 text-blue-700 border border-blue-200";
+              case "PDF":
+                return "bg-amber-100 text-amber-700 border border-amber-200";
+              case "ZIP":
+                return "bg-emerald-100 text-emerald-700 border border-emerald-200";
+              case "多媒体":
+                return "bg-purple-100 text-purple-700 border border-purple-200";
+              default:
+                return "bg-slate-100 text-slate-700 border border-slate-200";
+            }
+          };
+
+          const getDocIcon = (type) => {
+            const t = (type || "").toUpperCase();
+            switch (t) {
+              case "HDX":
+                return "fa-solid fa-file-shield text-red-600";
+              case "CHM":
+                return "fa-solid fa-file-code text-blue-600";
+              case "PDF":
+                return "fa-solid fa-file-pdf text-amber-600";
+              case "ZIP":
+                return "fa-solid fa-file-zipper text-emerald-600";
+              case "多媒体":
+                return "fa-solid fa-photo-film text-purple-600";
+              default:
+                return "fa-solid fa-file-lines text-slate-500";
+            }
+          };
+
+          const getTaskStatusBadgeClass = (status) => {
+            switch (status) {
+              case 1:
+                return "bg-blue-100 text-blue-700 animate-pulse";
+              case 2:
+                return "bg-emerald-100 text-emerald-700";
+              case 3:
+                return "bg-red-100 text-red-700";
+              case 4:
+                return "bg-amber-100 text-amber-700";
+              default:
+                return "bg-slate-100 text-slate-700";
+            }
+          };
+
+          const getTaskStatusStr = (status) => {
+            const map = {
+              0: "排队中",
+              1: "下载中",
+              2: "已完成",
+              3: "失败",
+              4: "已暂停",
+              5: "已取消",
+            };
+            return map[status] || "未知";
+          };
+
+          const formatBytes = (bytes) => {
+            if (!bytes || bytes === 0) return "0 B";
+            const k = 1024;
+            const sizes = ["B", "KB", "MB", "GB"];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return (
+              parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+            );
+          };
+
+          const checkCategorySyncStatus = async () => {
+            try {
+              const res = await fetch("/api/category-sync/status").then((r) =>
+                r.json(),
+              );
+              if (res.code === 0 && res.data) {
+                categorySyncStatus.value = res.data;
+              }
+            } catch (e) {}
+          };
+
+          const triggerManualCategorySync = async () => {
+            try {
+              const res = await fetch("/api/category-sync/start", {
+                method: "POST",
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                categorySyncStatus.value.isSyncing = true;
+                categorySyncStatus.value.isInitial = false;
+                showToast("已开始从华为官网同步产品分类树...");
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("触发同步失败: " + e.message, "error");
+            }
+          };
+
+          const checkCrawlStatus = async () => {
+            try {
+              const res = await fetch("/api/crawl/status").then((r) =>
+                r.json(),
+              );
+              if (res.code === 0 && res.data) {
+                crawlerRunning.value = res.data.isBusy;
+              }
+            } catch (e) {}
+          };
+
+          onMounted(async () => {
+            await loadSettings();
+            await fetchStats();
+            await fetchCategories();
+            await checkCategorySyncStatus();
+            await loadDocuments();
+            await loadTasks();
+            await checkCrawlStatus();
+            setInterval(checkCrawlStatus, 4000);
+            setInterval(checkCategorySyncStatus, 3000);
+            initWebSocket();
+          });
+
+          return {
+            activeTab,
+            tabTitle,
+            wsConnected,
+            scanning,
+            crawlerRunning,
+            loadingDocs,
+            categorySyncStatus,
+            categorySyncPercentage,
+            triggerManualCategorySync,
+            crawlerScope,
+            crawlerLines,
+            crawlerProducts,
+            canStartScopedCrawl,
+            crawlerTargetDesc,
+            scopedCrawlButtonText,
+            crawlerLogs,
+            crawlerProgress,
+            logContainer,
+            stats,
+            categories,
+            currentProductLines,
+            products,
+            docList,
+            selectedNIDs,
+            filters,
+            docPagination,
+            downloadTasks,
+            activeDownloadCount,
+            isAllSelected,
+            config,
+            configForm,
+            toast,
+            lastScanResult,
+            onCategoryChange,
+            onProductLineChange,
+            onProductChange,
+            onCrawlerCategoryChange,
+            onCrawlerLineChange,
+            setDocTypeFilter,
+            availableDocCategories,
+            setDocCategoryFilter,
+            debounceSearch,
+            resetFilters,
+            changePage,
+            toggleSelectAll,
+            startDownloadSingle,
+            batchDownloadSelected,
+            pauseTask,
+            resumeTask,
+            deleteTask,
+            triggerScan,
+            startFullCrawl,
+            startScopedCrawl,
+            stopCrawler,
+            saveSettings,
+            openLocalFolder,
+            getDocTypeBadgeClass,
+            getDocIcon,
+            getTaskStatusBadgeClass,
+            getTaskStatusStr,
+            formatBytes,
+          };
+        },
+      }).mount("#app");
+    </script>
+  </body>
 </html>
