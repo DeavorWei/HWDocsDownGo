@@ -1,0 +1,274 @@
+package downloader
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"go.uber.org/zap"
+
+	"hwdocsdown/internal/crawler"
+	"hwdocsdown/internal/logger"
+	"hwdocsdown/internal/store"
+)
+
+type DownloadTaskRunner struct {
+	task        *store.DownloadTask
+	repo        *store.Repository
+	docCrawler  *crawler.DocCrawler
+	ctx         context.Context
+	cancel      context.CancelFunc
+	onProgress  func(event ProgressEvent)
+	downloadDir string
+}
+
+func NewTaskRunner(
+	task *store.DownloadTask,
+	repo *store.Repository,
+	docCrawler *crawler.DocCrawler,
+	downloadDir string,
+	onProgress func(event ProgressEvent),
+) *DownloadTaskRunner {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &DownloadTaskRunner{
+		task:        task,
+		repo:        repo,
+		docCrawler:  docCrawler,
+		ctx:         ctx,
+		cancel:      cancel,
+		onProgress:  onProgress,
+		downloadDir: downloadDir,
+	}
+}
+
+func (r *DownloadTaskRunner) Cancel() {
+	r.cancel()
+}
+
+func (r *DownloadTaskRunner) Run() error {
+	r.task.Status = int(StatusDownloading)
+	r.notifyProgress(0)
+
+	// 1. 获取最新下载直链
+	fileInfo, err := r.docCrawler.FetchDocFileInfo(r.task.DocNID)
+	if err != nil {
+		r.fail(fmt.Sprintf("获取下载链接失败: %v", err))
+		return err
+	}
+
+	downloadURL := fileInfo.DownloadURL
+	fileName := fileInfo.FileName
+	if fileName == "" {
+		fileName = r.task.DocName
+	}
+	// 确保合法的文件名
+	fileName = sanitizeFileName(fileName)
+	if fileInfo.Type != "" && filepath.Ext(fileName) == "" {
+		fileName = fileName + "." + fileInfo.Type
+	}
+
+	finalPath := filepath.Join(r.downloadDir, fileName)
+	tempPath := finalPath + ".tmp"
+	r.task.FileName = fileName
+	r.task.SavePath = finalPath
+	r.task.DownloadURL = downloadURL
+
+	// 2. 检查本地临时文件断点续传
+	var existingBytes int64
+	if fi, err := os.Stat(tempPath); err == nil {
+		existingBytes = fi.Size()
+	}
+
+	req, err := http.NewRequestWithContext(r.ctx, "GET", downloadURL, nil)
+	if err != nil {
+		r.fail(fmt.Sprintf("创建下载请求失败: %v", err))
+		return err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+	if existingBytes > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingBytes))
+	}
+
+	client := &http.Client{
+		Timeout: 0, // 下载文件不设整体超时，由 context 控制
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		if r.ctx.Err() != nil {
+			r.pause()
+			return nil
+		}
+		r.fail(fmt.Sprintf("连接服务器失败: %v", err))
+		return err
+	}
+	defer resp.Body.Close()
+
+	var totalBytes int64
+	var file *os.File
+
+	if resp.StatusCode == http.StatusPartialContent {
+		// 支持断点续传
+		totalBytes = existingBytes + resp.ContentLength
+		file, err = os.OpenFile(tempPath, os.O_WRONLY|os.O_APPEND, 0644)
+	} else if resp.StatusCode == http.StatusOK {
+		// 全新下载
+		existingBytes = 0
+		totalBytes = resp.ContentLength
+		file, err = os.Create(tempPath)
+	} else {
+		errMsg := fmt.Sprintf("HTTP 响应错误: %d", resp.StatusCode)
+		r.fail(errMsg)
+		return fmt.Errorf(errMsg)
+	}
+
+	if err != nil {
+		r.fail(fmt.Sprintf("打开本地文件失败: %v", err))
+		return err
+	}
+	defer file.Close()
+
+	r.task.TotalBytes = totalBytes
+	r.task.DownloadedBytes = existingBytes
+
+	// 3. 边读边写并统计进度
+	buf := make([]byte, 64*1024)
+	var downloadedSoFar = existingBytes
+	lastTime := time.Now()
+	var bytesSinceLastTime int64
+
+	for {
+		select {
+		case <-r.ctx.Done():
+			r.pause()
+			return nil
+		default:
+		}
+
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
+				r.fail(fmt.Sprintf("写入磁盘失败: %v", writeErr))
+				return writeErr
+			}
+			downloadedSoFar += int64(n)
+			bytesSinceLastTime += int64(n)
+			r.task.DownloadedBytes = downloadedSoFar
+
+			// 每 0.5 秒计算一次速度并通知
+			now := time.Now()
+			elapsed := now.Sub(lastTime)
+			if elapsed >= 500*time.Millisecond {
+				speedKBps := float64(bytesSinceLastTime) / elapsed.Seconds() / 1024.0
+				r.notifyProgress(speedKBps)
+				lastTime = now
+				bytesSinceLastTime = 0
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				break
+			}
+			if r.ctx.Err() != nil {
+				r.pause()
+				return nil
+			}
+			r.fail(fmt.Sprintf("下载中断: %v", readErr))
+			return readErr
+		}
+	}
+
+	file.Close()
+
+	// 4. 重命名为正式文件
+	os.Remove(finalPath)
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		r.fail(fmt.Sprintf("重命名文件失败: %v", err))
+		return err
+	}
+
+	// 5. 完成处理
+	r.task.Status = int(StatusCompleted)
+	r.task.Progress = 100.0
+	r.task.SpeedKBps = 0
+	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "")
+
+	// 标记文档为已下载
+	r.repo.UpdateDocDownloaded(r.task.DocNID, 1, finalPath)
+
+	r.notifyProgress(0)
+	logger.Info("文档下载完成",
+		zap.String("docName", r.task.DocName),
+		zap.String("savePath", finalPath),
+		zap.Int64("bytes", totalBytes),
+	)
+	return nil
+}
+
+func (r *DownloadTaskRunner) notifyProgress(speedKBps float64) {
+	var progress float64
+	if r.task.TotalBytes > 0 {
+		progress = float64(r.task.DownloadedBytes) / float64(r.task.TotalBytes) * 100.0
+	}
+	r.task.Progress = progress
+	r.task.SpeedKBps = speedKBps
+
+	// 存库
+	r.repo.UpdateDownloadTaskProgress(r.task.ID, r.task.DownloadedBytes, r.task.TotalBytes, progress, speedKBps, r.task.Status, r.task.ErrorMsg)
+
+	if r.onProgress != nil {
+		var speedStr string
+		if speedKBps > 1024 {
+			speedStr = fmt.Sprintf("%.2f MB/s", speedKBps/1024.0)
+		} else {
+			speedStr = fmt.Sprintf("%.1f KB/s", speedKBps)
+		}
+		r.onProgress(ProgressEvent{
+			TaskID:          r.task.ID,
+			DocNID:          r.task.DocNID,
+			DocName:         r.task.DocName,
+			FileName:        r.task.FileName,
+			SavePath:        r.task.SavePath,
+			TotalBytes:      r.task.TotalBytes,
+			DownloadedBytes: r.task.DownloadedBytes,
+			Progress:        progress,
+			SpeedKBps:       speedKBps,
+			SpeedStr:        speedStr,
+			Status:          TaskStatus(r.task.Status),
+			StatusStr:       TaskStatus(r.task.Status).String(),
+			ErrorMsg:        r.task.ErrorMsg,
+		})
+	}
+}
+
+func (r *DownloadTaskRunner) fail(msg string) {
+	r.task.Status = int(StatusFailed)
+	r.task.ErrorMsg = msg
+	r.notifyProgress(0)
+}
+
+func (r *DownloadTaskRunner) pause() {
+	r.task.Status = int(StatusPaused)
+	r.notifyProgress(0)
+}
+
+func sanitizeFileName(name string) string {
+	invalid := []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"}
+	result := name
+	for _, char := range invalid {
+		result = strings.ReplaceAll(result, char, "_")
+	}
+	return strings.TrimSpace(result)
+}
