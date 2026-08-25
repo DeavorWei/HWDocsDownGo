@@ -86,13 +86,22 @@ func TestDynamicLogLevel(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	_, err = InitLogger(tempDir, false, "warn")
+	// 默认级别应为 info
+	_, err = InitLogger(tempDir, false, "")
 	if err != nil {
 		t.Fatalf("InitLogger failed: %v", err)
 	}
 
+	if GetLevel() != "info" {
+		t.Errorf("Expected default initial level info, got %s", GetLevel())
+	}
+	if !atomicLevel.Enabled(zapcore.InfoLevel) {
+		t.Errorf("Info level should be enabled when default level is info")
+	}
+
+	SetLevel("warn")
 	if GetLevel() != "warn" {
-		t.Errorf("Expected initial level warn, got %s", GetLevel())
+		t.Errorf("Expected level warn, got %s", GetLevel())
 	}
 	if atomicLevel.Enabled(zapcore.InfoLevel) {
 		t.Errorf("Info level should be disabled when level is warn")

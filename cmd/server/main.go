@@ -32,8 +32,8 @@ func main() {
 	noBrowser := flag.Bool("no-browser", false, "启动后不自动打开浏览器")
 	flag.Parse()
 
-	// 1. 初始化 Zap 高性能日志记录器 (启动转储 log.log 为 日期+时间.log，默认级别 warn)
-	_, err := logger.InitLogger(*logDir, *debug, "warn")
+	// 1. 初始化 Zap 高性能日志记录器 (启动转储 log.log 为 日期+时间.log，默认级别 info)
+	_, err := logger.InitLogger(*logDir, *debug, "info")
 	if err != nil {
 		fmt.Printf("初始化日志系统失败: %v\n", err)
 		os.Exit(1)
@@ -70,6 +70,7 @@ func main() {
 		zap.String("downloadDir", cfg.DownloadDir),
 		zap.Int("maxConcurrent", cfg.MaxConcurrent),
 		zap.Int("fileThreads", cfg.FileThreads),
+		zap.Int("crawlerThreads", cfg.CrawlerThreads),
 		zap.String("logLevel", cfg.LogLevel),
 		zap.Bool("autoSyncCategories", cfg.AutoSyncCategories),
 	)

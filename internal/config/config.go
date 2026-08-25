@@ -15,7 +15,8 @@ type Config struct {
 	Port               int    `json:"port"`
 	DownloadDir        string `json:"downloadDir"`
 	MaxConcurrent      int    `json:"maxConcurrent"`
-	FileThreads        int    `json:"fileThreads"` // 单文件多线程数 1-32，默认 1
+	FileThreads        int    `json:"fileThreads"`    // 单文件多线程数 1-32，默认 1
+	CrawlerThreads     int    `json:"crawlerThreads"` // 爬虫并发线程数 1-32，默认 1
 	RequestDelayMs     int    `json:"requestDelayMs"`
 	CustomCookie       string `json:"customCookie"`
 	AutoSyncCategories bool   `json:"autoSyncCategories"`
@@ -46,9 +47,9 @@ func InitConfig(repo *store.Repository) *Config {
 		dbPath = abs
 	}
 
-	logLevel := repo.GetSetting("log_level", "warn")
+	logLevel := repo.GetSetting("log_level", "info")
 	if logLevel == "" {
-		logLevel = "warn"
+		logLevel = "info"
 	}
 
 	cfg := &Config{
@@ -56,6 +57,7 @@ func InitConfig(repo *store.Repository) *Config {
 		DownloadDir:        repo.GetSetting("download_dir", defaultDownloadDir),
 		MaxConcurrent:      getIntSetting(repo, "max_concurrent", 3),
 		FileThreads:        getIntSetting(repo, "file_threads", 1),
+		CrawlerThreads:     getIntSetting(repo, "crawler_threads", 1),
 		RequestDelayMs:     getIntSetting(repo, "request_delay_ms", 500),
 		CustomCookie:       repo.GetSetting("custom_cookie", ""),
 		AutoSyncCategories: getBoolSetting(repo, "auto_sync_categories", true),
@@ -92,7 +94,7 @@ func GetConfig() *Config {
 	return GlobalConfig
 }
 
-func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string, fileThreads int) {
+func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string, fileThreads, crawlerThreads int) {
 	configLock.Lock()
 	defer configLock.Unlock()
 
@@ -108,6 +110,10 @@ func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, del
 	if fileThreads >= 1 && fileThreads <= 32 {
 		GlobalConfig.FileThreads = fileThreads
 		repo.SetSetting("file_threads", strconv.Itoa(fileThreads))
+	}
+	if crawlerThreads >= 1 && crawlerThreads <= 32 {
+		GlobalConfig.CrawlerThreads = crawlerThreads
+		repo.SetSetting("crawler_threads", strconv.Itoa(crawlerThreads))
 	}
 	if delayMs >= 0 {
 		GlobalConfig.RequestDelayMs = delayMs

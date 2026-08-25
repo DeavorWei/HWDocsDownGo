@@ -374,6 +374,7 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 		DownloadDir        string `json:"downloadDir"`
 		MaxConcurrent      int    `json:"maxConcurrent"`
 		FileThreads        int    `json:"fileThreads"`
+		CrawlerThreads     int    `json:"crawlerThreads"`
 		RequestDelayMs     int    `json:"requestDelayMs"`
 		CustomCookie       string `json:"customCookie"`
 		AutoSyncCategories bool   `json:"autoSyncCategories"`
@@ -388,9 +389,10 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 		zap.String("downloadDir", req.DownloadDir),
 		zap.Int("maxConcurrent", req.MaxConcurrent),
 		zap.Int("fileThreads", req.FileThreads),
+		zap.Int("crawlerThreads", req.CrawlerThreads),
 		zap.String("logLevel", req.LogLevel),
 	)
-	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel, req.FileThreads)
+	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel, req.FileThreads, req.CrawlerThreads)
 	success(c, config.GetConfig())
 }
 

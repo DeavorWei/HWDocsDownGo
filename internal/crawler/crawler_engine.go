@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
+	"hwdocsdown/internal/config"
 	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/store"
 )
@@ -60,6 +62,118 @@ func (e *CrawlerEngine) notifyFinished(success bool, msg string) {
 	}
 }
 
+type crawlWorkerTask struct {
+	index    int
+	total    int
+	prod     store.Product
+	lineName string
+	catName  string
+}
+
+// crawlProductsConcurrent 并发抓取产品型号列表（支持 1-32 线程，日志包含 [爬虫-X] 编号）
+func (e *CrawlerEngine) crawlProductsConcurrent(
+	ctx context.Context,
+	prods []store.Product,
+	lineName, catName string,
+	send func(string, ...interface{}),
+	onProgress func(current, total int, currentItem string),
+) (int, bool) {
+	if len(prods) == 0 {
+		return 0, false
+	}
+
+	cfg := config.GetConfig()
+	numWorkers := 1
+	if cfg != nil && cfg.CrawlerThreads > 0 {
+		numWorkers = cfg.CrawlerThreads
+	}
+	if numWorkers > 32 {
+		numWorkers = 32
+	}
+	if numWorkers > len(prods) {
+		numWorkers = len(prods)
+	}
+
+	logger.Info("启动产品型号并发爬取池",
+		zap.Int("workers", numWorkers),
+		zap.Int("prodsCount", len(prods)),
+		zap.String("lineName", lineName),
+	)
+
+	taskChan := make(chan crawlWorkerTask, len(prods))
+	for i, p := range prods {
+		taskChan <- crawlWorkerTask{
+			index:    i + 1,
+			total:    len(prods),
+			prod:     p,
+			lineName: lineName,
+			catName:  catName,
+		}
+	}
+	close(taskChan)
+
+	var totalDocsCount int64
+	var completedCount int64
+	var wsfBlocked atomic.Bool
+	var wg sync.WaitGroup
+
+	for w := 1; w <= numWorkers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			workerTag := fmt.Sprintf("[爬虫-%d]", workerID)
+
+			for task := range taskChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				if wsfBlocked.Load() {
+					return
+				}
+
+				prod := task.prod
+				send("   %s [%d/%d] 正在抓取型号: %s (PID: %s)...", workerTag, task.index, task.total, prod.Name, prod.ID)
+				logger.Debug("爬虫工作协程开始抓取型号",
+					zap.Int("workerId", workerID),
+					zap.String("product", prod.Name),
+					zap.String("pid", prod.ID),
+				)
+
+				e.catCrawler.FetchSubModelsAndVersions(prod.ID)
+				docs, err := e.docCrawler.FetchDocsByProduct(prod, task.lineName, task.catName)
+				if err == nil && len(docs) > 0 {
+					atomic.AddInt64(&totalDocsCount, int64(len(docs)))
+					send("   %s 📄 型号 [%s] 发现并入库 %d 篇产品文档", workerTag, prod.Name, len(docs))
+					logger.Info("爬虫工作协程抓取到文档",
+						zap.Int("workerId", workerID),
+						zap.String("product", prod.Name),
+						zap.Int("docCount", len(docs)),
+					)
+				} else if IsWsfCheckError(err) {
+					wsfBlocked.Store(true)
+					logger.Warn("爬虫工作协程触发华为网关安全拦截",
+						zap.Int("workerId", workerID),
+						zap.String("product", prod.Name),
+					)
+					send("   %s 🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。", workerTag)
+					return
+				}
+
+				done := atomic.AddInt64(&completedCount, 1)
+				if onProgress != nil {
+					onProgress(int(done), task.total, fmt.Sprintf("型号: %s (%s)", prod.Name, workerTag))
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+	return int(totalDocsCount), wsfBlocked.Load()
+}
+
 // StartFullCrawl 启动全量深度爬取（大类 -> 产品线 -> 型号 -> 版本 -> 文档）
 func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(current, total int, currentItem string)) error {
 	e.mu.Lock()
@@ -73,7 +187,12 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 	e.cancelFunc = cancel
 	e.mu.Unlock()
 
-	logger.Info("启动全量深度文档爬取任务")
+	cfg := config.GetConfig()
+	threads := 1
+	if cfg != nil && cfg.CrawlerThreads > 0 {
+		threads = cfg.CrawlerThreads
+	}
+	logger.Info("启动全量深度文档爬取任务", zap.Int("crawlerThreads", threads))
 
 	go func() {
 		defer func() {
@@ -91,7 +210,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 			}
 		}
 
-		send("🚀 启动华为官网全量深度文档爬取任务...")
+		send("🚀 启动华为官网全量深度文档爬取任务 (并发线程数: %d)...", threads)
 		startTime := time.Now()
 
 		// 1. 抓取产品大类与产品线
@@ -116,7 +235,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 		var totalProductsCount int
 		var totalDocsCount int
 
-		// 2. 遍历每条产品线，抓取型号树
+		// 2. 遍历每条产品线，抓取型号树并并发抓取文档
 		send("【步骤 2/3】开始遍历所有产品线，抓取各产品线下的型号树与系列列表...")
 		for lineIdx, line := range allLines {
 			select {
@@ -138,32 +257,14 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 				continue
 			}
 			totalProductsCount += len(prods)
-			send("   └─ 成功收录 %d 个产品型号", len(prods))
+			send("   └─ 成功收录 %d 个产品型号，启动 %d 线程并发解析文档...", len(prods), threads)
 
-			// 3. 遍历型号，抓取子型号与版本，并尝试抓取文档
-			for _, prod := range prods {
-				select {
-				case <-ctx.Done():
-					send("🛑 爬虫任务已被用户手动停止")
-					e.notifyFinished(false, "任务已停止")
-					return
-				default:
-				}
-
-				e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-
-				docs, err := e.docCrawler.FetchDocsByProduct(prod, line.Name, line.CategoryID)
-				if err == nil && len(docs) > 0 {
-					totalDocsCount += len(docs)
-					send("      📄 型号 [%s] 发现并入库 %d 篇产品文档 (HDX/CHM/PDF)", prod.Name, len(docs))
-				} else if IsWsfCheckError(err) {
-					// 首次被拦截立即触发自动熔断
-					send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！")
-					send("🛑 为避免无意义的无效请求，爬虫引擎已自动停止后续爬取任务。")
-					send("💡【解决方案】请在浏览器打开 support.huawei.com 复制请求头中的 Cookie，粘贴到本系统的【系统设置】->【自定义 Cookie】并保存，然后重新启动爬取即可！")
-					e.notifyFinished(false, "网关安全拦截已熔断")
-					return
-				}
+			// 3. 并发抓取型号文档
+			docsCount, wsfBlocked := e.crawlProductsConcurrent(ctx, prods, line.Name, line.CategoryID, send, onProgress)
+			totalDocsCount += docsCount
+			if wsfBlocked {
+				e.notifyFinished(false, "网关安全拦截已熔断")
+				return
 			}
 		}
 
@@ -199,10 +300,17 @@ func (e *CrawlerEngine) StartScopedCrawl(
 	e.cancelFunc = cancel
 	e.mu.Unlock()
 
+	cfg := config.GetConfig()
+	threads := 1
+	if cfg != nil && cfg.CrawlerThreads > 0 {
+		threads = cfg.CrawlerThreads
+	}
+
 	logger.Info("启动定向爬取任务",
 		zap.String("categoryId", categoryID),
 		zap.String("lineId", lineID),
 		zap.String("productId", productID),
+		zap.Int("crawlerThreads", threads),
 	)
 
 	go func() {
@@ -234,9 +342,9 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			}
 
 			logger.Info("定向抓取单个型号", zap.String("product", prodName), zap.String("productId", productID))
-			send("🚀 启动指定产品型号 [%s] 定向爬取...", prodName)
+			send("🚀 [爬虫-1] 启动指定产品型号 [%s] 定向爬取...", prodName)
 			if onProgress != nil {
-				onProgress(1, 1, fmt.Sprintf("型号: %s", prodName))
+				onProgress(1, 1, fmt.Sprintf("型号: %s ([爬虫-1])", prodName))
 			}
 
 			e.catCrawler.FetchSubModelsAndVersions(prod.ID)
@@ -244,18 +352,18 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			if err != nil {
 				if IsWsfCheckError(err) {
 					logger.Warn("网关 WSF 安全校验拦截熔断", zap.String("product", prodName))
-					send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
+					send("🚨 [爬虫-1]【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
 					e.notifyFinished(false, "网关安全拦截已熔断")
 					return
 				}
 				logger.Error("抓取型号文档异常", zap.String("product", prodName), zap.Error(err))
-				send("⚠️ 抓取型号 [%s] 文档异常: %v", prodName, err)
+				send("⚠️ [爬虫-1] 抓取型号 [%s] 文档异常: %v", prodName, err)
 				e.notifyFinished(false, "抓取文档异常")
 				return
 			}
 
 			logger.Info("型号定向爬取完成", zap.String("product", prodName), zap.Int("docCount", len(docs)))
-			send("🎉 产品型号 [%s] 爬取完成！共入库 %d 篇产品文档", prodName, len(docs))
+			send("🎉 [爬虫-1] 产品型号 [%s] 爬取完成！共入库 %d 篇产品文档", prodName, len(docs))
 			e.notifyFinished(true, "产品型号爬取完成")
 			return
 		}
@@ -273,7 +381,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			}
 
 			logger.Info("定向抓取产品线", zap.String("lineName", lineName), zap.String("lineId", lineID))
-			send("🚀 启动指定产品线 [%s] 快速深度爬取...", lineName)
+			send("🚀 启动指定产品线 [%s] 快速深度爬取 (并发线程数: %d)...", lineName, threads)
 			prods, err := e.catCrawler.FetchProductsByLine(lineID, linePID)
 			if err != nil {
 				logger.Error("获取产品型号列表失败", zap.String("lineName", lineName), zap.Error(err))
@@ -281,34 +389,12 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				e.notifyFinished(false, "获取型号列表失败")
 				return
 			}
-			send("✅ 成功发现 %d 个产品型号，开始抓取型号版本与文档...", len(prods))
+			send("✅ 成功发现 %d 个产品型号，启动并发抓取型号版本与文档...", len(prods))
 
-			var docCount int
-			for i, prod := range prods {
-				select {
-				case <-ctx.Done():
-					send("🛑 任务已被用户手动停止")
-					e.notifyFinished(false, "任务已停止")
-					return
-				default:
-				}
-
-				if onProgress != nil {
-					onProgress(i+1, len(prods), fmt.Sprintf("型号: %s", prod.Name))
-				}
-
-				send("   [%d/%d] 正在抓取型号: %s (PID: %s)...", i+1, len(prods), prod.Name, prod.ID)
-				e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-
-				docs, err := e.docCrawler.FetchDocsByProduct(prod, lineName, "")
-				if err == nil && len(docs) > 0 {
-					docCount += len(docs)
-					send("   └─ 发现并入库 %d 篇产品文档", len(docs))
-				} else if IsWsfCheckError(err) {
-					send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
-					e.notifyFinished(false, "网关安全拦截已熔断")
-					return
-				}
+			docCount, wsfBlocked := e.crawlProductsConcurrent(ctx, prods, lineName, "", send, onProgress)
+			if wsfBlocked {
+				e.notifyFinished(false, "网关安全拦截已熔断")
+				return
 			}
 
 			send("🎉 产品线 [%s] 爬取完成！共收录 %d 个型号，%d 篇产品文档", lineName, len(prods), docCount)
@@ -324,7 +410,8 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				catName = cat.Name
 			}
 
-			send("🚀 启动产品大类 [%s] 全量深度爬取...", catName)
+			logger.Info("定向抓取产品大类", zap.String("catName", catName), zap.String("categoryId", categoryID))
+			send("🚀 启动产品大类 [%s] 全量深度爬取 (并发线程数: %d)...", catName, threads)
 			lines, _ := e.repo.GetProductLinesByCategoryID(categoryID)
 			if len(lines) == 0 {
 				e.catCrawler.FetchCategories()
@@ -356,25 +443,11 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				}
 				totalProds += len(prods)
 
-				for _, prod := range prods {
-					select {
-					case <-ctx.Done():
-						send("🛑 任务已被用户手动停止")
-						e.notifyFinished(false, "任务已停止")
-						return
-					default:
-					}
-
-					e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-					docs, err := e.docCrawler.FetchDocsByProduct(prod, line.Name, catName)
-					if err == nil && len(docs) > 0 {
-						totalDocs += len(docs)
-						send("      📄 型号 [%s] 发现并入库 %d 篇产品文档", prod.Name, len(docs))
-					} else if IsWsfCheckError(err) {
-						send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
-						e.notifyFinished(false, "网关安全拦截已熔断")
-						return
-					}
+				docsCount, wsfBlocked := e.crawlProductsConcurrent(ctx, prods, line.Name, catName, send, onProgress)
+				totalDocs += docsCount
+				if wsfBlocked {
+					e.notifyFinished(false, "网关安全拦截已熔断")
+					return
 				}
 			}
 

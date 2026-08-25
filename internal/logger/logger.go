@@ -17,7 +17,7 @@ import (
 var (
 	L           *zap.Logger
 	Sugar       *zap.SugaredLogger
-	atomicLevel = zap.NewAtomicLevelAt(zapcore.WarnLevel)
+	atomicLevel = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	listeners   []func(level string, msg string)
 	listenerMu  sync.RWMutex
 	currentDir  string
@@ -27,7 +27,7 @@ var (
 // 1. 每次程序启动则创建一个新的 log.log 文件，旧的 log.log 按照 日期+时间 (YYYY-MM-DD_HH-mm-ss.log) 进行重命名转储
 // 2. 单个日志文件最大为 10MB，超过 10MB 转储
 // 3. 日志默认保留 1024MB 以及 180 天，超过则从最旧的文件开始删除
-// 4. 支持动态日志级别控制，默认为 warn
+// 4. 支持动态日志级别控制，默认为 info
 func InitLogger(logDir string, debug bool, initialLevel string) (*zap.Logger, error) {
 	if logDir == "" {
 		logDir = filepath.Join(".", "HWDDGoData", "logs")
@@ -71,8 +71,8 @@ func InitLogger(logDir string, debug bool, initialLevel string) (*zap.Logger, er
 	fileEncoderConfig := encoderConfig
 	fileEncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
 
-	// 默认级别为 warn
-	lvl := zapcore.WarnLevel
+	// 默认级别为 info
+	lvl := zapcore.InfoLevel
 	if debug {
 		lvl = zapcore.DebugLevel
 	} else if initialLevel != "" {

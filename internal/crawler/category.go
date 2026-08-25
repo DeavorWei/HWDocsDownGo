@@ -6,10 +6,12 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
+	"hwdocsdown/internal/config"
 	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/store"
 )
@@ -344,22 +346,80 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 		onProgress(status)
 	}
 
-	totalProducts := 0
-	for lineIdx, line := range allLines {
-		status.CurrentLine = lineIdx + 1
-		status.CurrentLineName = line.Name
-		prods, err := c.FetchProductsByLine(line.ID, line.ProID)
-		if err == nil {
-			totalProducts += len(prods)
-		}
-		status.TotalProducts = totalProducts
-		c.setSyncStatus(status)
-		if onProgress != nil {
-			onProgress(status)
-		}
+	cfg := config.GetConfig()
+	numWorkers := 1
+	if cfg != nil && cfg.CrawlerThreads > 0 {
+		numWorkers = cfg.CrawlerThreads
+	}
+	if numWorkers > 32 {
+		numWorkers = 32
+	}
+	if numWorkers > len(allLines) && len(allLines) > 0 {
+		numWorkers = len(allLines)
 	}
 
+	logger.Info("启动产品分类树多线程同步",
+		zap.Int("workers", numWorkers),
+		zap.Int("totalLines", len(allLines)),
+	)
+
+	type lineTask struct {
+		index int
+		line  store.ProductLine
+	}
+
+	taskChan := make(chan lineTask, len(allLines))
+	for i, l := range allLines {
+		taskChan <- lineTask{index: i + 1, line: l}
+	}
+	close(taskChan)
+
+	var totalProducts int64
+	var completedLines int64
+	var statusMu sync.Mutex
+	var wg sync.WaitGroup
+
+	for w := 1; w <= numWorkers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			workerTag := fmt.Sprintf("[爬虫-%d]", workerID)
+
+			for task := range taskChan {
+				line := task.line
+				logger.Debug("分类同步协程开始解析产品线",
+					zap.Int("workerId", workerID),
+					zap.String("lineName", line.Name),
+					zap.String("lineId", line.ID),
+				)
+
+				prods, err := c.FetchProductsByLine(line.ID, line.ProID)
+				if err == nil {
+					atomic.AddInt64(&totalProducts, int64(len(prods)))
+				}
+
+				done := atomic.AddInt64(&completedLines, 1)
+
+				statusMu.Lock()
+				status.CurrentLine = int(done)
+				status.CurrentLineName = fmt.Sprintf("%s (%s)", line.Name, workerTag)
+				status.TotalProducts = int(atomic.LoadInt64(&totalProducts))
+				curStatus := status
+				c.setSyncStatus(curStatus)
+				statusMu.Unlock()
+
+				if onProgress != nil {
+					onProgress(curStatus)
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+
 	status.IsSyncing = false
+	status.CurrentLine = len(allLines)
+	status.TotalProducts = int(atomic.LoadInt64(&totalProducts))
 	c.setSyncStatus(status)
 	if onFinished != nil {
 		onFinished(status)
@@ -368,7 +428,8 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 	logger.Info("产品分类树更新完成",
 		zap.Int("categories", len(categories)),
 		zap.Int("lines", len(allLines)),
-		zap.Int("products", totalProducts),
+		zap.Int("products", int(totalProducts)),
+		zap.Int("workers", numWorkers),
 	)
 	return nil
 }
