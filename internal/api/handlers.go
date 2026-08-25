@@ -349,6 +349,7 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 	var req struct {
 		DownloadDir        string `json:"downloadDir"`
 		MaxConcurrent      int    `json:"maxConcurrent"`
+		FileThreads        int    `json:"fileThreads"`
 		RequestDelayMs     int    `json:"requestDelayMs"`
 		CustomCookie       string `json:"customCookie"`
 		AutoSyncCategories bool   `json:"autoSyncCategories"`
@@ -358,7 +359,7 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 		fail(c, 400, "参数格式错误")
 		return
 	}
-	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel)
+	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel, req.FileThreads)
 	success(c, config.GetConfig())
 }
 

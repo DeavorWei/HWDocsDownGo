@@ -15,6 +15,7 @@ type Config struct {
 	Port               int    `json:"port"`
 	DownloadDir        string `json:"downloadDir"`
 	MaxConcurrent      int    `json:"maxConcurrent"`
+	FileThreads        int    `json:"fileThreads"` // 单文件多线程数 1-32，默认 1
 	RequestDelayMs     int    `json:"requestDelayMs"`
 	CustomCookie       string `json:"customCookie"`
 	AutoSyncCategories bool   `json:"autoSyncCategories"`
@@ -54,6 +55,7 @@ func InitConfig(repo *store.Repository) *Config {
 		Port:               8088,
 		DownloadDir:        repo.GetSetting("download_dir", defaultDownloadDir),
 		MaxConcurrent:      getIntSetting(repo, "max_concurrent", 3),
+		FileThreads:        getIntSetting(repo, "file_threads", 1),
 		RequestDelayMs:     getIntSetting(repo, "request_delay_ms", 500),
 		CustomCookie:       repo.GetSetting("custom_cookie", ""),
 		AutoSyncCategories: getBoolSetting(repo, "auto_sync_categories", true),
@@ -90,7 +92,7 @@ func GetConfig() *Config {
 	return GlobalConfig
 }
 
-func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string) {
+func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string, fileThreads int) {
 	configLock.Lock()
 	defer configLock.Unlock()
 
@@ -102,6 +104,10 @@ func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, del
 	if maxConcurrent > 0 {
 		GlobalConfig.MaxConcurrent = maxConcurrent
 		repo.SetSetting("max_concurrent", strconv.Itoa(maxConcurrent))
+	}
+	if fileThreads >= 1 && fileThreads <= 32 {
+		GlobalConfig.FileThreads = fileThreads
+		repo.SetSetting("file_threads", strconv.Itoa(fileThreads))
 	}
 	if delayMs >= 0 {
 		GlobalConfig.RequestDelayMs = delayMs

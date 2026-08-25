@@ -8,11 +8,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
 
+	"hwdocsdown/internal/config"
 	"hwdocsdown/internal/crawler"
 	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/store"
@@ -79,7 +84,283 @@ func (r *DownloadTaskRunner) Run() error {
 	r.task.SavePath = finalPath
 	r.task.DownloadURL = downloadURL
 
-	// 2. 检查本地临时文件断点续传
+	// 2. 检查配置中的线程数 (1-32，默认 1)
+	cfg := config.GetConfig()
+	fileThreads := 1
+	if cfg != nil && cfg.FileThreads > 1 {
+		fileThreads = cfg.FileThreads
+	}
+	if fileThreads > 32 {
+		fileThreads = 32
+	}
+
+	// 3. 若线程数大于 1，探测服务器是否支持 Range 分片并发
+	if fileThreads > 1 {
+		totalBytes, supportsRange := r.probeRangeSupport(downloadURL)
+		if supportsRange && totalBytes >= int64(fileThreads)*64*1024 {
+			logger.Info("启动单文件多线程加速下载",
+				zap.String("docName", r.task.DocName),
+				zap.Int("threads", fileThreads),
+				zap.Int64("totalBytes", totalBytes),
+			)
+			return r.downloadMultiThread(downloadURL, tempPath, finalPath, totalBytes, fileThreads)
+		}
+	}
+
+	// 4. 默认或单线程下载
+	return r.downloadSingleThread(downloadURL, tempPath, finalPath)
+}
+
+// probeRangeSupport 探测目标服务器是否支持 Range 分片及获取文件真实总大小
+func (r *DownloadTaskRunner) probeRangeSupport(downloadURL string) (int64, bool) {
+	req, err := http.NewRequestWithContext(r.ctx, "GET", downloadURL, nil)
+	if err != nil {
+		return 0, false
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+	req.Header.Set("Range", "bytes=0-0")
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusPartialContent {
+		cr := resp.Header.Get("Content-Range")
+		// Content-Range: bytes 0-0/12345678
+		if cr != "" {
+			re := regexp.MustCompile(`/(\d+)`)
+			matches := re.FindStringSubmatch(cr)
+			if len(matches) > 1 {
+				if total, err := strconv.ParseInt(matches[1], 10, 64); err == nil && total > 0 {
+					return total, true
+				}
+			}
+		}
+		if resp.ContentLength > 0 {
+			return resp.ContentLength, true
+		}
+	}
+	return 0, false
+}
+
+// downloadMultiThread 单文件多线程（1-32）分片并发下载
+func (r *DownloadTaskRunner) downloadMultiThread(downloadURL, tempPath, finalPath string, totalBytes int64, numThreads int) error {
+	r.task.TotalBytes = totalBytes
+
+	// 预先创建并调整临时文件大小
+	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		r.fail(fmt.Sprintf("创建临时文件失败: %v", err))
+		return err
+	}
+	if err := file.Truncate(totalBytes); err != nil {
+		file.Close()
+		r.fail(fmt.Sprintf("预分配文件空间失败: %v", err))
+		return err
+	}
+	file.Close()
+
+	var downloadedBytes int64
+	chunkSize := totalBytes / int64(numThreads)
+
+	ctx, cancel := context.WithCancel(r.ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, numThreads)
+
+	// 进度与速度统计定时器
+	stopTicker := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		lastTime := time.Now()
+		var lastBytes int64
+
+		for {
+			select {
+			case <-stopTicker:
+				return
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				current := atomic.LoadInt64(&downloadedBytes)
+				elapsed := now.Sub(lastTime).Seconds()
+				if elapsed > 0 {
+					speedKBps := float64(current-lastBytes) / elapsed / 1024.0
+					r.task.DownloadedBytes = current
+					r.notifyProgress(speedKBps)
+					lastTime = now
+					lastBytes = current
+				}
+			}
+		}
+	}()
+
+	client := &http.Client{
+		Timeout: 0,
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			MaxIdleConnsPerHost: numThreads,
+		},
+	}
+
+	for i := 0; i < numThreads; i++ {
+		startByte := int64(i) * chunkSize
+		endByte := int64(i+1)*chunkSize - 1
+		if i == numThreads-1 {
+			endByte = totalBytes - 1
+		}
+
+		wg.Add(1)
+		go func(chunkIdx int, start, end int64) {
+			defer wg.Done()
+
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			f, openErr := os.OpenFile(tempPath, os.O_WRONLY, 0644)
+			if openErr != nil {
+				select {
+				case errChan <- fmt.Errorf("分片 %d 打开文件失败: %w", chunkIdx, openErr):
+				default:
+				}
+				cancel()
+				return
+			}
+			defer f.Close()
+
+			req, reqErr := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+			if reqErr != nil {
+				select {
+				case errChan <- reqErr:
+				default:
+				}
+				cancel()
+				return
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+			req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+
+			resp, doErr := client.Do(req)
+			if doErr != nil {
+				if ctx.Err() == nil {
+					select {
+					case errChan <- fmt.Errorf("分片 %d 下载网络错误: %w", chunkIdx, doErr):
+					default:
+					}
+					cancel()
+				}
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+				select {
+				case errChan <- fmt.Errorf("分片 %d HTTP 响应错误: %d", chunkIdx, resp.StatusCode):
+				default:
+				}
+				cancel()
+				return
+			}
+
+			buf := make([]byte, 64*1024)
+			currentOffset := start
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				n, rErr := resp.Body.Read(buf)
+				if n > 0 {
+					if _, wErr := f.WriteAt(buf[:n], currentOffset); wErr != nil {
+						select {
+						case errChan <- fmt.Errorf("分片 %d 写入错误: %w", chunkIdx, wErr):
+						default:
+						}
+						cancel()
+						return
+					}
+					currentOffset += int64(n)
+					atomic.AddInt64(&downloadedBytes, int64(n))
+				}
+
+				if rErr != nil {
+					if rErr == io.EOF {
+						break
+					}
+					if ctx.Err() == nil {
+						select {
+						case errChan <- fmt.Errorf("分片 %d 读取中断: %w", chunkIdx, rErr):
+						default:
+						}
+						cancel()
+					}
+					return
+				}
+			}
+		}(i, startByte, endByte)
+	}
+
+	wg.Wait()
+	close(stopTicker)
+
+	if r.ctx.Err() != nil {
+		r.pause()
+		return nil
+	}
+
+	select {
+	case err := <-errChan:
+		r.fail(err.Error())
+		return err
+	default:
+	}
+
+	// 重命名为正式文件
+	os.Remove(finalPath)
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		r.fail(fmt.Sprintf("重命名文件失败: %v", err))
+		return err
+	}
+
+	// 完成处理
+	r.task.Status = int(StatusCompleted)
+	r.task.Progress = 100.0
+	r.task.DownloadedBytes = totalBytes
+	r.task.SpeedKBps = 0
+	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "")
+	r.repo.UpdateDocDownloaded(r.task.DocNID, 1, finalPath)
+
+	r.notifyProgress(0)
+	logger.Info("多线程文档下载完成",
+		zap.String("docName", r.task.DocName),
+		zap.String("savePath", finalPath),
+		zap.Int("threads", numThreads),
+		zap.Int64("bytes", totalBytes),
+	)
+	return nil
+}
+
+// downloadSingleThread 单流标准下载（支持断点续传）
+func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPath string) error {
 	var existingBytes int64
 	if fi, err := os.Stat(tempPath); err == nil {
 		existingBytes = fi.Size()
@@ -98,7 +379,7 @@ func (r *DownloadTaskRunner) Run() error {
 	}
 
 	client := &http.Client{
-		Timeout: 0, // 下载文件不设整体超时，由 context 控制
+		Timeout: 0,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
@@ -119,11 +400,9 @@ func (r *DownloadTaskRunner) Run() error {
 	var file *os.File
 
 	if resp.StatusCode == http.StatusPartialContent {
-		// 支持断点续传
 		totalBytes = existingBytes + resp.ContentLength
 		file, err = os.OpenFile(tempPath, os.O_WRONLY|os.O_APPEND, 0644)
 	} else if resp.StatusCode == http.StatusOK {
-		// 全新下载
 		existingBytes = 0
 		totalBytes = resp.ContentLength
 		file, err = os.Create(tempPath)
@@ -142,7 +421,6 @@ func (r *DownloadTaskRunner) Run() error {
 	r.task.TotalBytes = totalBytes
 	r.task.DownloadedBytes = existingBytes
 
-	// 3. 边读边写并统计进度
 	buf := make([]byte, 64*1024)
 	var downloadedSoFar = existingBytes
 	lastTime := time.Now()
@@ -166,7 +444,6 @@ func (r *DownloadTaskRunner) Run() error {
 			bytesSinceLastTime += int64(n)
 			r.task.DownloadedBytes = downloadedSoFar
 
-			// 每 0.5 秒计算一次速度并通知
 			now := time.Now()
 			elapsed := now.Sub(lastTime)
 			if elapsed >= 500*time.Millisecond {
@@ -192,20 +469,18 @@ func (r *DownloadTaskRunner) Run() error {
 
 	file.Close()
 
-	// 4. 重命名为正式文件
+	// 重命名为正式文件
 	os.Remove(finalPath)
 	if err := os.Rename(tempPath, finalPath); err != nil {
 		r.fail(fmt.Sprintf("重命名文件失败: %v", err))
 		return err
 	}
 
-	// 5. 完成处理
+	// 完成处理
 	r.task.Status = int(StatusCompleted)
 	r.task.Progress = 100.0
 	r.task.SpeedKBps = 0
 	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "")
-
-	// 标记文档为已下载
 	r.repo.UpdateDocDownloaded(r.task.DocNID, 1, finalPath)
 
 	r.notifyProgress(0)
@@ -272,3 +547,4 @@ func sanitizeFileName(name string) string {
 	}
 	return strings.TrimSpace(result)
 }
+
