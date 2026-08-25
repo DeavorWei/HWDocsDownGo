@@ -850,6 +850,22 @@
                 </button>
               </div>
 
+              <!-- 系统日志级别控制 -->
+              <div class="flex items-center justify-between p-4 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div class="text-xs font-semibold text-slate-700">系统日志记录级别</div>
+                  <div class="text-xs text-slate-400 mt-0.5">控制输出并持久化到 log.log 的日志详细度，默认精简为 WARN。</div>
+                </div>
+                <select 
+                  v-model="configForm.logLevel" 
+                  class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 shadow-xs">
+                  <option value="debug">DEBUG (详细调试信息)</option>
+                  <option value="info">INFO (常规运行信息)</option>
+                  <option value="warn">WARN (警告信息 - 默认)</option>
+                  <option value="error">ERROR (仅错误)</option>
+                </select>
+              </div>
+
               <div class="pt-4">
                 <button 
                   @click="saveSettings" 
@@ -1004,8 +1020,8 @@
 
         // 下载任务与配置
         const downloadTasks = ref([]);
-        const config = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '', autoSyncCategories: true });
-        const configForm = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '', autoSyncCategories: true });
+        const config = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '', autoSyncCategories: true, logLevel: 'warn' });
+        const configForm = ref({ downloadDir: '', maxConcurrent: 3, requestDelayMs: 500, customCookie: '', autoSyncCategories: true, logLevel: 'warn' });
 
         // Toast
         const toast = ref({ show: false, message: '', type: 'success' });
@@ -1094,6 +1110,7 @@
             const params = new URLSearchParams();
             if (filters.value.productId) params.append('productId', filters.value.productId);
             if (filters.value.productLineId) params.append('lineId', filters.value.productLineId);
+            if (filters.value.categoryId) params.append('categoryId', filters.value.categoryId);
             const res = await fetch(`/api/doc-categories?${params.toString()}`).then(r => r.json());
             if (res.code === 0 && res.data && res.data.length > 0) {
               const set = new Set([...res.data, ...availableDocCategories.value]);

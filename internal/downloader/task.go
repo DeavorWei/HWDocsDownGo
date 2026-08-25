@@ -130,7 +130,7 @@ func (r *DownloadTaskRunner) Run() error {
 	} else {
 		errMsg := fmt.Sprintf("HTTP 响应错误: %d", resp.StatusCode)
 		r.fail(errMsg)
-		return fmt.Errorf(errMsg)
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	if err != nil {

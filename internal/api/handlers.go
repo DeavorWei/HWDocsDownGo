@@ -135,7 +135,8 @@ func (h *ServerHandler) GetSubModelsAndVersions(c *gin.Context) {
 func (h *ServerHandler) GetDocCategories(c *gin.Context) {
 	productID := c.Query("productId")
 	lineID := c.Query("lineId")
-	cats, err := h.repo.GetDocCategories(productID, lineID)
+	categoryID := c.Query("categoryId")
+	cats, err := h.repo.GetDocCategories(productID, lineID, categoryID)
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -351,12 +352,13 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 		RequestDelayMs     int    `json:"requestDelayMs"`
 		CustomCookie       string `json:"customCookie"`
 		AutoSyncCategories bool   `json:"autoSyncCategories"`
+		LogLevel           string `json:"logLevel"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, 400, "参数格式错误")
 		return
 	}
-	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories)
+	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel)
 	success(c, config.GetConfig())
 }
 

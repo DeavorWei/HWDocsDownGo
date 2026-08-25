@@ -267,7 +267,7 @@ func TestStoreAndQueryWithNewFields(t *testing.T) {
 	}
 
 	// 5. GetDocCategories distinct tags
-	cats, err := repo.GetDocCategories("PID1", "")
+	cats, err := repo.GetDocCategories("PID1", "", "")
 	if err != nil {
 		t.Fatalf("GetDocCategories failed: %v", err)
 	}

@@ -32,8 +32,8 @@ func main() {
 	noBrowser := flag.Bool("no-browser", false, "启动后不自动打开浏览器")
 	flag.Parse()
 
-	// 1. 初始化 Zap 高性能日志记录器
-	_, err := logger.InitLogger(*logDir, *debug)
+	// 1. 初始化 Zap 高性能日志记录器 (启动转储 log.log 为 日期+时间.log，默认级别 warn)
+	_, err := logger.InitLogger(*logDir, *debug, "warn")
 	if err != nil {
 		fmt.Printf("初始化日志系统失败: %v\n", err)
 		os.Exit(1)
@@ -51,10 +51,13 @@ func main() {
 	}
 	repo := store.NewRepository(db)
 
-	// 3. 初始化全局系统配置
+	// 3. 初始化全局系统配置并同步日志级别
 	cfg := config.InitConfig(repo)
 	if *port != 8088 {
 		cfg.Port = *port
+	}
+	if !*debug && cfg.LogLevel != "" {
+		logger.SetLevel(cfg.LogLevel)
 	}
 
 	// 4. 初始化爬虫引擎与业务模块

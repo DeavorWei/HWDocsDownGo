@@ -160,8 +160,7 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 
 	if q.ProductID != "" {
 		query = query.Where("product_id = ?", q.ProductID)
-	}
-	if q.ProductLineID != "" {
+	} else if q.ProductLineID != "" {
 		// 根据产品线过滤
 		var pids []string
 		r.db.Model(&Product{}).Where("product_line_id = ?", q.ProductLineID).Pluck("id", &pids)
@@ -170,7 +169,23 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 		} else {
 			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
 		}
+	} else if q.CategoryID != "" {
+		// 根据产品大类过滤
+		var lineIDs []string
+		r.db.Model(&ProductLine{}).Where("category_id = ?", q.CategoryID).Pluck("id", &lineIDs)
+		if len(lineIDs) > 0 {
+			var pids []string
+			r.db.Model(&Product{}).Where("product_line_id IN ?", lineIDs).Pluck("id", &pids)
+			if len(pids) > 0 {
+				query = query.Where("product_id IN ?", pids)
+			} else {
+				return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+			}
+		} else {
+			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+		}
 	}
+
 	if q.VersionID != "" {
 		query = query.Where("version_id = ?", q.VersionID)
 	}
@@ -222,7 +237,7 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 }
 
 // GetDocCategories 获取数据库中已有的所有资料分类标签列表（如：产品文档包、资料书架、方案概述、特性描述等）
-func (r *Repository) GetDocCategories(productID, productLineID string) ([]string, error) {
+func (r *Repository) GetDocCategories(productID, productLineID, categoryID string) ([]string, error) {
 	query := r.db.Model(&Document{}).Where("doc_category != '' AND doc_category IS NOT NULL")
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
@@ -231,6 +246,16 @@ func (r *Repository) GetDocCategories(productID, productLineID string) ([]string
 		r.db.Model(&Product{}).Where("product_line_id = ?", productLineID).Pluck("id", &pids)
 		if len(pids) > 0 {
 			query = query.Where("product_id IN ?", pids)
+		}
+	} else if categoryID != "" {
+		var lineIDs []string
+		r.db.Model(&ProductLine{}).Where("category_id = ?", categoryID).Pluck("id", &lineIDs)
+		if len(lineIDs) > 0 {
+			var pids []string
+			r.db.Model(&Product{}).Where("product_line_id IN ?", lineIDs).Pluck("id", &pids)
+			if len(pids) > 0 {
+				query = query.Where("product_id IN ?", pids)
+			}
 		}
 	}
 	var cats []string

@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
+	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/store"
 )
 
@@ -16,6 +18,7 @@ type Config struct {
 	RequestDelayMs     int    `json:"requestDelayMs"`
 	CustomCookie       string `json:"customCookie"`
 	AutoSyncCategories bool   `json:"autoSyncCategories"`
+	LogLevel           string `json:"logLevel"` // debug | info | warn | error, 默认 warn
 	DBPath             string `json:"dbPath"`
 }
 
@@ -42,6 +45,11 @@ func InitConfig(repo *store.Repository) *Config {
 		dbPath = abs
 	}
 
+	logLevel := repo.GetSetting("log_level", "warn")
+	if logLevel == "" {
+		logLevel = "warn"
+	}
+
 	cfg := &Config{
 		Port:               8088,
 		DownloadDir:        repo.GetSetting("download_dir", defaultDownloadDir),
@@ -49,6 +57,7 @@ func InitConfig(repo *store.Repository) *Config {
 		RequestDelayMs:     getIntSetting(repo, "request_delay_ms", 500),
 		CustomCookie:       repo.GetSetting("custom_cookie", ""),
 		AutoSyncCategories: getBoolSetting(repo, "auto_sync_categories", true),
+		LogLevel:           logLevel,
 		DBPath:             dbPath,
 	}
 
@@ -81,7 +90,7 @@ func GetConfig() *Config {
 	return GlobalConfig
 }
 
-func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool) {
+func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, delayMs int, cookie string, autoSync bool, logLevel string) {
 	configLock.Lock()
 	defer configLock.Unlock()
 
@@ -106,5 +115,11 @@ func UpdateConfig(repo *store.Repository, downloadDir string, maxConcurrent, del
 		repo.SetSetting("auto_sync_categories", "true")
 	} else {
 		repo.SetSetting("auto_sync_categories", "false")
+	}
+
+	if logLevel != "" {
+		GlobalConfig.LogLevel = strings.ToLower(logLevel)
+		repo.SetSetting("log_level", GlobalConfig.LogLevel)
+		logger.SetLevel(GlobalConfig.LogLevel)
 	}
 }
