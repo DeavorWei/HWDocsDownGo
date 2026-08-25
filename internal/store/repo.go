@@ -4,8 +4,11 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"hwdocsdown/internal/logger"
 )
 
 type Repository struct {
@@ -18,6 +21,7 @@ func NewRepository(db *gorm.DB) *Repository {
 
 // UpsertCategories 批量保存大类与产品线
 func (r *Repository) UpsertCategories(cats []Category) error {
+	logger.Debug("批量持久化产品大类", zap.Int("count", len(cats)))
 	return r.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&cats).Error
@@ -25,6 +29,7 @@ func (r *Repository) UpsertCategories(cats []Category) error {
 
 // UpsertProductLines 批量保存产品线
 func (r *Repository) UpsertProductLines(lines []ProductLine) error {
+	logger.Debug("批量持久化二级产品线", zap.Int("count", len(lines)))
 	return r.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&lines).Error
@@ -32,6 +37,7 @@ func (r *Repository) UpsertProductLines(lines []ProductLine) error {
 
 // UpsertProducts 批量保存产品系列
 func (r *Repository) UpsertProducts(prods []Product) error {
+	logger.Debug("批量持久化产品型号", zap.Int("count", len(prods)))
 	return r.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&prods).Error
@@ -39,6 +45,7 @@ func (r *Repository) UpsertProducts(prods []Product) error {
 
 // UpsertSubModels 批量保存子型号
 func (r *Repository) UpsertSubModels(models []SubModel) error {
+	logger.Debug("批量持久化子型号", zap.Int("count", len(models)))
 	return r.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&models).Error
@@ -46,6 +53,7 @@ func (r *Repository) UpsertSubModels(models []SubModel) error {
 
 // UpsertVersions 批量保存版本
 func (r *Repository) UpsertVersions(vers []Version) error {
+	logger.Debug("批量持久化版本数据", zap.Int("count", len(vers)))
 	return r.db.Clauses(clause.OnConflict{
 		UpdateAll: true,
 	}).Create(&vers).Error
@@ -56,6 +64,7 @@ func (r *Repository) UpsertDocuments(docs []Document) error {
 	if len(docs) == 0 {
 		return nil
 	}
+	logger.Debug("分批持久化产品文档数据", zap.Int("count", len(docs)))
 	return r.db.Clauses(clause.OnConflict{
 		DoUpdates: clause.AssignmentColumns([]string{
 			"product_name", "product_line_name", "category_name", "version_id", "version_name",

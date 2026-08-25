@@ -54,6 +54,7 @@ func IsWsfCheckError(err error) bool {
 func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer string) ([]byte, error) {
 	cfg := config.GetConfig()
 	if cfg != nil && cfg.RequestDelayMs > 0 {
+		logger.Debug("执行爬虫请求间隔延迟", zap.Int("delayMs", cfg.RequestDelayMs))
 		time.Sleep(time.Duration(cfg.RequestDelayMs) * time.Millisecond)
 	}
 
@@ -64,7 +65,7 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 
 	req, err := http.NewRequest(method, urlStr, reqBody)
 	if err != nil {
-		logger.Error("创建 HTTP 请求失败", zap.String("url", urlStr), zap.Error(err))
+		logger.Error("创建 HTTP 请求失败", zap.String("method", method), zap.String("url", urlStr), zap.Error(err))
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 
@@ -99,7 +100,7 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 	// 打印请求携带的 Cookies
 	c.reqMu.Lock()
 	if c.isFirstReq {
-		logger.Info("🌐 [首次请求] 发起 HTTP 请求，当前携带 Cookies 如下:",
+		logger.Info("🌐 [首次网络请求] 发起 HTTP 请求",
 			zap.String("method", method),
 			zap.String("url", urlStr),
 			zap.String("cookies", cookieStr),
@@ -109,7 +110,7 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 		logger.Debug("发起 HTTP 请求",
 			zap.String("method", method),
 			zap.String("url", urlStr),
-			zap.String("cookies", cookieStr),
+			zap.Int("bodySize", len(body)),
 		)
 	}
 	c.reqMu.Unlock()
@@ -117,12 +118,16 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 	// 重试机制（最多 3 次）
 	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
+		startTime := time.Now()
 		resp, err := c.client.Do(req)
+		latency := time.Since(startTime)
+
 		if err != nil {
 			lastErr = err
 			logger.Warn("HTTP 请求连接失败，重试中...",
 				zap.String("url", urlStr),
 				zap.Int("attempt", attempt),
+				zap.Duration("latency", latency),
 				zap.Error(err),
 			)
 			time.Sleep(time.Duration(attempt*500) * time.Millisecond)
@@ -133,6 +138,11 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
+			logger.Warn("读取 HTTP 响应体失败，重试中...",
+				zap.String("url", urlStr),
+				zap.Int("attempt", attempt),
+				zap.Error(err),
+			)
 			continue
 		}
 
@@ -142,12 +152,18 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 				logger.Warn("🚨 接口被华为安全网关拦截 (WSF Check Error)",
 					zap.String("url", urlStr),
 					zap.Int("status", resp.StatusCode),
+					zap.Duration("latency", latency),
 					zap.String("response", truncate(string(respBody), 150)),
-					zap.String("cookies", cookieStr),
 					zap.String("suggestion", "请在【系统设置】中粘贴有效浏览器 Cookie 后重试"),
 				)
 				return nil, fmt.Errorf("华为安全网关拦截 (WSF check error): %s", string(respBody))
 			}
+			logger.Debug("HTTP 请求成功",
+				zap.String("url", urlStr),
+				zap.Int("status", resp.StatusCode),
+				zap.Int("bytes", len(respBody)),
+				zap.Duration("latency", latency),
+			)
 			return respBody, nil
 		}
 
@@ -157,8 +173,8 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 			logger.Warn("🚨 接口被华为安全网关拦截 (WSF Check Error 400)",
 				zap.String("url", urlStr),
 				zap.Int("status", resp.StatusCode),
+				zap.Duration("latency", latency),
 				zap.String("response", truncate(respBodyStr, 150)),
-				zap.String("cookies", cookieStr),
 				zap.String("suggestion", "请在【系统设置】中粘贴有效浏览器 Cookie 后重试"),
 			)
 			return nil, fmt.Errorf("华为安全网关拦截 (WSF check error): %s", respBodyStr)
@@ -168,6 +184,7 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 			zap.String("url", urlStr),
 			zap.Int("status", resp.StatusCode),
 			zap.Int("attempt", attempt),
+			zap.Duration("latency", latency),
 			zap.String("response", truncate(respBodyStr, 150)),
 		)
 
@@ -175,6 +192,7 @@ func (c *HttpClient) DoRequest(method, urlStr string, body []byte, referer strin
 		time.Sleep(time.Duration(attempt*500) * time.Millisecond)
 	}
 
+	logger.Error("HTTP 请求重试 3 次后仍失败", zap.String("url", urlStr), zap.Error(lastErr))
 	return nil, lastErr
 }
 

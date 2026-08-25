@@ -94,6 +94,7 @@ func (dm *DownloadManager) AddTask(doc *store.Document) (*store.DownloadTask, er
 
 // BatchAddTasks 批量添加下载任务
 func (dm *DownloadManager) BatchAddTasks(docs []store.Document) ([]*store.DownloadTask, error) {
+	logger.Info("批量添加下载任务", zap.Int("count", len(docs)))
 	var tasks []*store.DownloadTask
 	for _, d := range docs {
 		t, err := dm.AddTask(&d)
@@ -101,6 +102,7 @@ func (dm *DownloadManager) BatchAddTasks(docs []store.Document) ([]*store.Downlo
 			tasks = append(tasks, t)
 		}
 	}
+	logger.Info("批量添加下载任务完成", zap.Int("enqueued", len(tasks)))
 	return tasks, nil
 }
 
@@ -122,6 +124,7 @@ func (dm *DownloadManager) ResumeTask(taskID string) error {
 
 	tasks, err := dm.repo.GetAllDownloadTasks()
 	if err != nil {
+		logger.Error("恢复下载任务失败: 读取任务列表错误", zap.String("taskId", taskID), zap.Error(err))
 		return err
 	}
 	for _, t := range tasks {
@@ -150,10 +153,12 @@ func (dm *DownloadManager) workerLoop() {
 		maxWorkers = cfg.MaxConcurrent
 	}
 	sem := make(chan struct{}, maxWorkers)
+	logger.Info("下载管理器工作池启动", zap.Int("maxWorkers", maxWorkers))
 
 	for {
 		select {
 		case <-dm.stopChan:
+			logger.Info("下载管理器工作池停止")
 			return
 		case taskID := <-dm.taskQueue:
 			sem <- struct{}{}
@@ -166,8 +171,10 @@ func (dm *DownloadManager) workerLoop() {
 }
 
 func (dm *DownloadManager) executeTask(taskID string) {
+	logger.Debug("开始调度执行下载任务", zap.String("taskId", taskID))
 	tasks, err := dm.repo.GetAllDownloadTasks()
 	if err != nil {
+		logger.Error("获取任务失败", zap.String("taskId", taskID), zap.Error(err))
 		return
 	}
 	var task *store.DownloadTask
@@ -178,6 +185,7 @@ func (dm *DownloadManager) executeTask(taskID string) {
 		}
 	}
 	if task == nil {
+		logger.Warn("任务未找到，跳过执行", zap.String("taskId", taskID))
 		return
 	}
 
@@ -192,7 +200,9 @@ func (dm *DownloadManager) executeTask(taskID string) {
 	dm.runners[taskID] = runner
 	dm.mu.Unlock()
 
+	startTime := time.Now()
 	runner.Run()
+	logger.Debug("下载任务执行结束", zap.String("taskId", taskID), zap.Duration("elapsed", time.Since(startTime)))
 
 	dm.mu.Lock()
 	delete(dm.runners, taskID)

@@ -42,6 +42,13 @@ func main() {
 	logger.Info("==========================================================")
 	logger.Info("     华为产品文档下载管理器 - HWDocsDownGo 正在启动...     ")
 	logger.Info("==========================================================")
+	logger.Debug("命令行参数配置",
+		zap.Int("port", *port),
+		zap.String("dbPath", *dbPath),
+		zap.String("logDir", *logDir),
+		zap.Bool("debug", *debug),
+		zap.Bool("noBrowser", *noBrowser),
+	)
 
 	// 2. 初始化纯 Go SQLite 数据库
 	db, err := store.InitDB(*dbPath)
@@ -59,6 +66,13 @@ func main() {
 	if !*debug && cfg.LogLevel != "" {
 		logger.SetLevel(cfg.LogLevel)
 	}
+	logger.Info("系统配置加载完成",
+		zap.String("downloadDir", cfg.DownloadDir),
+		zap.Int("maxConcurrent", cfg.MaxConcurrent),
+		zap.Int("fileThreads", cfg.FileThreads),
+		zap.String("logLevel", cfg.LogLevel),
+		zap.Bool("autoSyncCategories", cfg.AutoSyncCategories),
+	)
 
 	// 4. 初始化爬虫引擎与业务模块
 	httpClient := crawler.NewHttpClient()

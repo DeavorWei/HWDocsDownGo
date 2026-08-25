@@ -231,10 +231,12 @@ func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]
 
 // FetchSubModelsAndVersions 抓取产品型号下的细分子型号与版本
 func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.SubModel, []store.Version, error) {
+	logger.Debug("开始抓取产品型号的细分子型号与版本", zap.String("productId", productID))
 	apiURL := fmt.Sprintf("https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/sub-model-and-version/pc?subModelOfferingId=&pbiId=%s", productID)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/product-pid-%s", productID)
 	body, err := c.client.DoRequest("GET", apiURL, nil, referer)
 	if err != nil {
+		logger.Warn("抓取子型号与版本网络失败", zap.String("productId", productID), zap.Error(err))
 		return nil, nil, fmt.Errorf("抓取子型号与版本失败: %w", err)
 	}
 
@@ -255,6 +257,7 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
+		logger.Error("解析子型号与版本 JSON 失败", zap.String("productId", productID), zap.Error(err))
 		return nil, nil, fmt.Errorf("解析子型号与版本 JSON 失败: %w", err)
 	}
 
@@ -294,6 +297,11 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 		c.repo.UpsertVersions(versions)
 	}
 
+	logger.Debug("子型号与版本解析入库成功",
+		zap.String("productId", productID),
+		zap.Int("subModels", len(subModels)),
+		zap.Int("versions", len(versions)),
+	)
 	return subModels, versions, nil
 }
 

@@ -3,10 +3,12 @@ package crawler
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
+	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/store"
 )
 
@@ -44,6 +46,7 @@ func (e *CrawlerEngine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.cancelFunc != nil {
+		logger.Info("接收到停止爬虫引擎指令，正在取消上下文...")
 		e.cancelFunc()
 	}
 }
@@ -62,12 +65,15 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 	e.mu.Lock()
 	if e.isBusy {
 		e.mu.Unlock()
+		logger.Warn("尝试启动全量爬虫失败：已有任务正在运行中")
 		return fmt.Errorf("爬虫任务正在运行中，请勿重复启动")
 	}
 	e.isBusy = true
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFunc = cancel
 	e.mu.Unlock()
+
+	logger.Info("启动全量深度文档爬取任务")
 
 	go func() {
 		defer func() {
@@ -79,7 +85,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 
 		send := func(format string, a ...interface{}) {
 			msg := fmt.Sprintf(format, a...)
-			log.Println("[Crawler]", msg)
+			logger.Info(msg)
 			if onLog != nil {
 				onLog(msg)
 			}
@@ -162,6 +168,12 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 		}
 
 		elapsed := time.Since(startTime).Round(time.Second)
+		logger.Info("全量爬取任务完成",
+			zap.Duration("elapsed", elapsed),
+			zap.Int("lines", totalLines),
+			zap.Int("products", totalProductsCount),
+			zap.Int("docs", totalDocsCount),
+		)
 		send("🎉 全量爬取任务完成！耗时: %v", elapsed)
 		send("📊 统计报告: 产品线 = %d 条, 产品型号 = %d 个, 成功入库文档 = %d 篇", totalLines, totalProductsCount, totalDocsCount)
 		e.notifyFinished(true, "全量爬取完成")
@@ -179,12 +191,19 @@ func (e *CrawlerEngine) StartScopedCrawl(
 	e.mu.Lock()
 	if e.isBusy {
 		e.mu.Unlock()
+		logger.Warn("尝试启动定向爬虫失败：已有任务正在运行中")
 		return fmt.Errorf("爬虫任务正在运行中，请稍候")
 	}
 	e.isBusy = true
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelFunc = cancel
 	e.mu.Unlock()
+
+	logger.Info("启动定向爬取任务",
+		zap.String("categoryId", categoryID),
+		zap.String("lineId", lineID),
+		zap.String("productId", productID),
+	)
 
 	go func() {
 		defer func() {
@@ -196,7 +215,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 
 		send := func(format string, a ...interface{}) {
 			msg := fmt.Sprintf(format, a...)
-			log.Println("[Crawler]", msg)
+			logger.Info(msg)
 			if onLog != nil {
 				onLog(msg)
 			}
@@ -214,6 +233,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				prod = &store.Product{ID: productID, Name: productID}
 			}
 
+			logger.Info("定向抓取单个型号", zap.String("product", prodName), zap.String("productId", productID))
 			send("🚀 启动指定产品型号 [%s] 定向爬取...", prodName)
 			if onProgress != nil {
 				onProgress(1, 1, fmt.Sprintf("型号: %s", prodName))
@@ -223,15 +243,18 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			docs, err := e.docCrawler.FetchDocsByProduct(*prod, lineName, "")
 			if err != nil {
 				if IsWsfCheckError(err) {
+					logger.Warn("网关 WSF 安全校验拦截熔断", zap.String("product", prodName))
 					send("🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
 					e.notifyFinished(false, "网关安全拦截已熔断")
 					return
 				}
+				logger.Error("抓取型号文档异常", zap.String("product", prodName), zap.Error(err))
 				send("⚠️ 抓取型号 [%s] 文档异常: %v", prodName, err)
 				e.notifyFinished(false, "抓取文档异常")
 				return
 			}
 
+			logger.Info("型号定向爬取完成", zap.String("product", prodName), zap.Int("docCount", len(docs)))
 			send("🎉 产品型号 [%s] 爬取完成！共入库 %d 篇产品文档", prodName, len(docs))
 			e.notifyFinished(true, "产品型号爬取完成")
 			return
@@ -249,9 +272,11 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				}
 			}
 
+			logger.Info("定向抓取产品线", zap.String("lineName", lineName), zap.String("lineId", lineID))
 			send("🚀 启动指定产品线 [%s] 快速深度爬取...", lineName)
 			prods, err := e.catCrawler.FetchProductsByLine(lineID, linePID)
 			if err != nil {
+				logger.Error("获取产品型号列表失败", zap.String("lineName", lineName), zap.Error(err))
 				send("❌ 获取产品型号列表失败: %v", err)
 				e.notifyFinished(false, "获取型号列表失败")
 				return

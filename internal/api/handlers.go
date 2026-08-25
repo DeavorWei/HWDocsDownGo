@@ -8,10 +8,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 
 	"hwdocsdown/internal/config"
 	"hwdocsdown/internal/crawler"
 	"hwdocsdown/internal/downloader"
+	"hwdocsdown/internal/logger"
 	"hwdocsdown/internal/scanner"
 	"hwdocsdown/internal/store"
 )
@@ -59,6 +61,7 @@ func NewServerHandler(
 
 	// 监听爬虫结束事件并广播
 	crawlerEngine.SetOnFinished(func(success bool, msg string) {
+		logger.Info("爬虫引擎任务完成", zap.Bool("success", success), zap.String("msg", msg))
 		h.broadcastWS(map[string]interface{}{
 			"type": "CRAWLER_FINISHED",
 			"data": gin.H{
@@ -165,10 +168,12 @@ func (h *ServerHandler) AddDownloadTask(c *gin.Context) {
 		NIDs []string `json:"nids"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.NIDs) == 0 {
+		logger.Warn("API 添加下载任务失败: 参数为空或格式错误")
 		fail(c, 400, "请提供要下载的文档 NID 列表")
 		return
 	}
 
+	logger.Info("API 接收到添加下载任务请求", zap.Int("nidCount", len(req.NIDs)))
 	var addedTasks []*store.DownloadTask
 	for _, nid := range req.NIDs {
 		doc, err := h.repo.GetDocumentByNID(nid)
@@ -177,6 +182,8 @@ func (h *ServerHandler) AddDownloadTask(c *gin.Context) {
 			if err == nil {
 				addedTasks = append(addedTasks, t)
 			}
+		} else {
+			logger.Warn("未在数据库中找到文档记录", zap.String("nid", nid))
 		}
 	}
 
@@ -190,6 +197,7 @@ func (h *ServerHandler) AddDownloadTask(c *gin.Context) {
 func (h *ServerHandler) GetAllTasks(c *gin.Context) {
 	tasks, err := h.repo.GetAllDownloadTasks()
 	if err != nil {
+		logger.Error("API 获取下载任务失败", zap.Error(err))
 		fail(c, 500, err.Error())
 		return
 	}
@@ -199,6 +207,7 @@ func (h *ServerHandler) GetAllTasks(c *gin.Context) {
 // PauseTask 暂停任务
 func (h *ServerHandler) PauseTask(c *gin.Context) {
 	taskID := c.Param("id")
+	logger.Info("API 触发暂停下载任务", zap.String("taskId", taskID))
 	h.downManager.PauseTask(taskID)
 	success(c, true)
 }
@@ -206,8 +215,10 @@ func (h *ServerHandler) PauseTask(c *gin.Context) {
 // ResumeTask 继续任务
 func (h *ServerHandler) ResumeTask(c *gin.Context) {
 	taskID := c.Param("id")
+	logger.Info("API 触发恢复下载任务", zap.String("taskId", taskID))
 	err := h.downManager.ResumeTask(taskID)
 	if err != nil {
+		logger.Error("API 恢复下载任务失败", zap.String("taskId", taskID), zap.Error(err))
 		fail(c, 500, err.Error())
 		return
 	}
@@ -217,6 +228,7 @@ func (h *ServerHandler) ResumeTask(c *gin.Context) {
 // DeleteTask 删除任务
 func (h *ServerHandler) DeleteTask(c *gin.Context) {
 	taskID := c.Param("id")
+	logger.Info("API 触发删除下载任务", zap.String("taskId", taskID))
 	h.downManager.CancelTask(taskID)
 	success(c, true)
 }
@@ -233,9 +245,11 @@ func (h *ServerHandler) TriggerLocalScan(c *gin.Context) {
 	if dirPath == "" {
 		dirPath = cfg.DownloadDir
 	}
+	logger.Info("API 接收到触发本地扫描请求", zap.String("dirPath", dirPath))
 
 	res, err := h.localScanner.ScanDirectory(dirPath)
 	if err != nil {
+		logger.Error("API 本地目录扫描执行失败", zap.String("dirPath", dirPath), zap.Error(err))
 		fail(c, 500, "本地目录扫描失败: "+err.Error())
 		return
 	}
@@ -250,6 +264,11 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 		ProductID  string `json:"productId"`
 	}
 	c.ShouldBindJSON(&req)
+	logger.Info("API 接收到启动爬虫请求",
+		zap.String("categoryId", req.CategoryID),
+		zap.String("lineId", req.LineID),
+		zap.String("productId", req.ProductID),
+	)
 
 	onLog := func(msg string) {
 		h.broadcastWS(map[string]interface{}{
@@ -272,6 +291,7 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 	if req.CategoryID != "" || req.LineID != "" || req.ProductID != "" {
 		err := h.crawlerEngine.StartScopedCrawl(req.CategoryID, req.LineID, req.ProductID, onLog, onProgress)
 		if err != nil {
+			logger.Warn("API 启动定向爬取失败", zap.Error(err))
 			fail(c, 400, err.Error())
 			return
 		}
@@ -281,6 +301,7 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 
 	err := h.crawlerEngine.StartFullCrawl(onLog, onProgress)
 	if err != nil {
+		logger.Warn("API 启动全量爬取失败", zap.Error(err))
 		fail(c, 400, err.Error())
 		return
 	}
@@ -289,6 +310,7 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 
 // StopCrawl 停止爬虫
 func (h *ServerHandler) StopCrawl(c *gin.Context) {
+	logger.Info("API 接收到停止爬虫请求")
 	h.crawlerEngine.Stop()
 	success(c, "已发送停止爬虫指令")
 }
@@ -325,9 +347,11 @@ func (h *ServerHandler) GetCategorySyncStatus(c *gin.Context) {
 // StartCategorySync 手动触发产品分类树同步
 func (h *ServerHandler) StartCategorySync(c *gin.Context) {
 	if h.catCrawler.GetSyncStatus().IsSyncing {
+		logger.Warn("API 触发同步分类树被拒: 当前已有同步正在进行中")
 		fail(c, 400, "产品分类树正在同步中，请稍候")
 		return
 	}
+	logger.Info("API 接收到手动触发产品分类树同步请求")
 	go func() {
 		h.catCrawler.SyncAllCategoriesAndProducts(func(st crawler.CategorySyncStatus) {
 			h.broadcastWS(map[string]interface{}{
@@ -356,9 +380,16 @@ func (h *ServerHandler) UpdateSettings(c *gin.Context) {
 		LogLevel           string `json:"logLevel"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Warn("API 更新配置失败: 参数解析错误", zap.Error(err))
 		fail(c, 400, "参数格式错误")
 		return
 	}
+	logger.Info("API 保存系统配置",
+		zap.String("downloadDir", req.DownloadDir),
+		zap.Int("maxConcurrent", req.MaxConcurrent),
+		zap.Int("fileThreads", req.FileThreads),
+		zap.String("logLevel", req.LogLevel),
+	)
 	config.UpdateConfig(h.repo, req.DownloadDir, req.MaxConcurrent, req.RequestDelayMs, req.CustomCookie, req.AutoSyncCategories, req.LogLevel, req.FileThreads)
 	success(c, config.GetConfig())
 }
@@ -374,6 +405,7 @@ func (h *ServerHandler) OpenFolder(c *gin.Context) {
 	}
 
 	cleanPath := filepath.Clean(req.Path)
+	logger.Info("API 在 Windows 资源管理器中定位文件/目录", zap.String("path", cleanPath))
 	cmd := exec.Command("explorer.exe", "/select,", cleanPath)
 	if err := cmd.Start(); err != nil {
 		exec.Command("explorer.exe", filepath.Dir(cleanPath)).Start()
