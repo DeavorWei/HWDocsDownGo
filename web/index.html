@@ -271,11 +271,11 @@
             <div
               class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4"
             >
-              <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <!-- 1. 产品大类 -->
                 <div>
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
-                    >产品大类</label
+                    >1. 产品大类</label
                   >
                   <select
                     v-model="filters.categoryId"
@@ -296,7 +296,7 @@
                 <!-- 2. 二级产品线 -->
                 <div>
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
-                    >二级产品线</label
+                    >2. 二级产品线</label
                   >
                   <select
                     v-model="filters.productLineId"
@@ -315,20 +315,42 @@
                   </select>
                 </div>
 
-                <!-- 3. 产品系列/型号 -->
+                <!-- 3. 产品系列 -->
                 <div>
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
-                    >产品系列 / 型号</label
+                    >3. 产品系列</label
+                  >
+                  <select
+                    v-model="filters.series"
+                    @change="onFilterSeriesChange"
+                    :disabled="!filterSeriesList.length"
+                    class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50"
+                  >
+                    <option value="">全部系列</option>
+                    <option
+                      v-for="grp in filterSeriesList"
+                      :key="grp"
+                      :value="grp"
+                    >
+                      {{ grp }}
+                    </option>
+                  </select>
+                </div>
+
+                <!-- 4. 产品型号 -->
+                <div>
+                  <label class="block text-xs font-medium text-slate-500 mb-1.5"
+                    >4. 产品型号</label
                   >
                   <select
                     v-model="filters.productId"
                     @change="onProductChange"
-                    :disabled="!products.length"
+                    :disabled="!filteredFilterProducts.length"
                     class="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 disabled:opacity-50"
                   >
                     <option value="">全部型号</option>
                     <option
-                      v-for="prod in products"
+                      v-for="prod in filteredFilterProducts"
                       :key="prod.id"
                       :value="prod.id"
                     >
@@ -337,10 +359,10 @@
                   </select>
                 </div>
 
-                <!-- 4. 关键词搜索 -->
+                <!-- 5. 关键词搜索 -->
                 <div>
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
-                    >关键词搜索</label
+                    >5. 关键词搜索</label
                   >
                   <div class="relative">
                     <input
@@ -1034,7 +1056,7 @@
                   </span>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <!-- 1. 产品大类 -->
                   <div>
                     <label
@@ -1080,20 +1102,43 @@
                     </select>
                   </div>
 
-                  <!-- 3. 产品系列 / 型号 -->
+                  <!-- 3. 产品系列 -->
                   <div>
                     <label
                       class="block text-xs font-semibold text-slate-600 mb-1"
-                      >3. 产品系列 / 型号</label
+                      >3. 产品系列</label
+                    >
+                    <select
+                      v-model="crawlerScope.series"
+                      @change="onCrawlerSeriesChange"
+                      :disabled="!crawlerSeriesList.length"
+                      class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+                    >
+                      <option value="">全部系列 (可选)</option>
+                      <option
+                        v-for="grp in crawlerSeriesList"
+                        :key="grp"
+                        :value="grp"
+                      >
+                        {{ grp }}
+                      </option>
+                    </select>
+                  </div>
+
+                  <!-- 4. 产品型号 -->
+                  <div>
+                    <label
+                      class="block text-xs font-semibold text-slate-600 mb-1"
+                      >4. 产品型号</label
                     >
                     <select
                       v-model="crawlerScope.productId"
-                      :disabled="!crawlerProducts.length"
+                      :disabled="!filteredCrawlerProducts.length"
                       class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
                     >
                       <option value="">全部型号 (可选)</option>
                       <option
-                        v-for="prod in crawlerProducts"
+                        v-for="prod in filteredCrawlerProducts"
                         :key="prod.id"
                         :value="prod.id"
                       >
@@ -1742,10 +1787,26 @@
           const crawlerScope = ref({
             categoryId: "",
             lineId: "",
+            series: "",
             productId: "",
           });
           const crawlerLines = ref([]);
           const crawlerProducts = ref([]);
+          const crawlerSeriesList = computed(() => {
+            const set = new Set();
+            crawlerProducts.value.forEach((p) => {
+              if (p.naviGroup) set.add(p.naviGroup);
+            });
+            return Array.from(set);
+          });
+          const filteredCrawlerProducts = computed(() => {
+            if (!crawlerScope.value.series) {
+              return crawlerProducts.value;
+            }
+            return crawlerProducts.value.filter(
+              (p) => p.naviGroup === crawlerScope.value.series,
+            );
+          });
           const crawlerLogs = ref([]);
           const crawlerProgress = ref({ current: 0, total: 0, item: "" });
           const logContainer = ref(null);
@@ -1775,12 +1836,28 @@
           const categories = ref([]);
           const currentProductLines = ref([]);
           const products = ref([]);
+          const filterSeriesList = computed(() => {
+            const set = new Set();
+            products.value.forEach((p) => {
+              if (p.naviGroup) set.add(p.naviGroup);
+            });
+            return Array.from(set);
+          });
+          const filteredFilterProducts = computed(() => {
+            if (!filters.value.series) {
+              return products.value;
+            }
+            return products.value.filter(
+              (p) => p.naviGroup === filters.value.series,
+            );
+          });
           const docList = ref([]);
           const selectedNIDs = ref([]);
 
           const filters = ref({
             categoryId: "",
             productLineId: "",
+            series: "",
             productId: "",
             versionId: "",
             subModelId: "",
@@ -1889,6 +1966,7 @@
             return !!(
               crawlerScope.value.categoryId ||
               crawlerScope.value.lineId ||
+              crawlerScope.value.series ||
               crawlerScope.value.productId
             );
           });
@@ -1899,6 +1977,9 @@
                 (x) => x.id === crawlerScope.value.productId,
               );
               return `单个型号【${p ? p.name : crawlerScope.value.productId}】`;
+            }
+            if (crawlerScope.value.series) {
+              return `系列【${crawlerScope.value.series}】下所有型号`;
             }
             if (crawlerScope.value.lineId) {
               const l = crawlerLines.value.find(
@@ -1912,7 +1993,7 @@
               );
               return `大类【${c ? c.name : crawlerScope.value.categoryId}】下所有产品线及型号`;
             }
-            return "请在上方选择大类、产品线或型号";
+            return "请在上方选择大类、产品线、系列或型号";
           });
 
           const scopedCrawlButtonText = computed(() => {
@@ -1921,6 +2002,9 @@
                 (x) => x.id === crawlerScope.value.productId,
               );
               return `开始爬取型号: ${p ? p.name : ""}`;
+            }
+            if (crawlerScope.value.series) {
+              return `开始爬取系列: ${crawlerScope.value.series}`;
             }
             if (crawlerScope.value.lineId) {
               const l = crawlerLines.value.find(
@@ -1977,6 +2061,7 @@
             );
             currentProductLines.value = cat ? cat.lines || [] : [];
             filters.value.productLineId = "";
+            filters.value.series = "";
             filters.value.productId = "";
             filters.value.docCategory = "ALL";
             products.value = [];
@@ -1985,6 +2070,7 @@
           };
 
           const onProductLineChange = async () => {
+            filters.value.series = "";
             filters.value.productId = "";
             filters.value.docCategory = "ALL";
             products.value = [];
@@ -2000,6 +2086,12 @@
                 console.error(e);
               }
             }
+            fetchDocCategories();
+            loadDocuments();
+          };
+
+          const onFilterSeriesChange = () => {
+            filters.value.productId = "";
             fetchDocCategories();
             loadDocuments();
           };
@@ -2034,6 +2126,7 @@
             filters.value = {
               categoryId: "",
               productLineId: "",
+              series: "",
               productId: "",
               versionId: "",
               subModelId: "",
@@ -2057,6 +2150,7 @@
                 pageSize: docPagination.value.pageSize,
                 categoryId: filters.value.categoryId,
                 productLineId: filters.value.productLineId,
+                series: filters.value.series,
                 productId: filters.value.productId,
                 docType: filters.value.docType,
                 keyword: filters.value.keyword,
@@ -2214,11 +2308,13 @@
             );
             crawlerLines.value = cat ? cat.lines || [] : [];
             crawlerScope.value.lineId = "";
+            crawlerScope.value.series = "";
             crawlerScope.value.productId = "";
             crawlerProducts.value = [];
           };
 
           const onCrawlerLineChange = async () => {
+            crawlerScope.value.series = "";
             crawlerScope.value.productId = "";
             crawlerProducts.value = [];
             if (crawlerScope.value.lineId) {
@@ -2235,6 +2331,10 @@
             }
           };
 
+          const onCrawlerSeriesChange = () => {
+            crawlerScope.value.productId = "";
+          };
+
           const startScopedCrawl = async () => {
             if (!canStartScopedCrawl.value) return;
             try {
@@ -2244,6 +2344,7 @@
                 body: JSON.stringify({
                   categoryId: crawlerScope.value.categoryId,
                   lineId: crawlerScope.value.lineId,
+                  series: crawlerScope.value.series,
                   productId: crawlerScope.value.productId,
                 }),
               }).then((r) => r.json());
@@ -2573,6 +2674,8 @@
             crawlerScope,
             crawlerLines,
             crawlerProducts,
+            crawlerSeriesList,
+            filteredCrawlerProducts,
             canStartScopedCrawl,
             crawlerTargetDesc,
             scopedCrawlButtonText,
@@ -2583,6 +2686,8 @@
             categories,
             currentProductLines,
             products,
+            filterSeriesList,
+            filteredFilterProducts,
             docList,
             selectedNIDs,
             filters,
@@ -2596,9 +2701,11 @@
             lastScanResult,
             onCategoryChange,
             onProductLineChange,
+            onFilterSeriesChange,
             onProductChange,
             onCrawlerCategoryChange,
             onCrawlerLineChange,
+            onCrawlerSeriesChange,
             setDocTypeFilter,
             availableDocCategories,
             setDocCategoryFilter,

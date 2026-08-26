@@ -285,14 +285,14 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 	return nil
 }
 
-// StartScopedCrawl 定向抓取指定层级（产品大类 / 二级产品线 / 产品系列与型号）
+// StartScopedCrawl 定向抓取指定层级（产品大类 / 二级产品线 / 产品系列 / 产品型号）
 func (e *CrawlerEngine) StartScopedCrawl(
-	categoryID, lineID, productID string,
+	categoryID, lineID, series, productID string,
 	onLog func(string),
 	onProgress func(current, total int, currentItem string),
 ) error {
 	// 【关键修复】：若入参全为空，在未加锁前直接分流至 StartFullCrawl，杜绝自锁
-	if categoryID == "" && lineID == "" && productID == "" {
+	if categoryID == "" && lineID == "" && series == "" && productID == "" {
 		return e.StartFullCrawl(onLog, onProgress)
 	}
 
@@ -316,6 +316,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 	logger.Info("启动定向爬取任务",
 		zap.String("categoryId", categoryID),
 		zap.String("lineId", lineID),
+		zap.String("series", series),
 		zap.String("productId", productID),
 		zap.Int("crawlerThreads", threads),
 	)
@@ -376,7 +377,47 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			return
 		}
 
-		// 2. 二级产品线定向爬取
+		// 2. 指定产品系列定向爬取 (例如：交换机下的“园区网络解决方案”或“园区交换机”)
+		if series != "" && lineID != "" {
+			line, _ := e.repo.GetProductLineByID(lineID)
+			lineName := lineID
+			linePID := lineID
+			if line != nil {
+				lineName = line.Name
+				if line.ProID != "" {
+					linePID = line.ProID
+				}
+			}
+
+			logger.Info("定向抓取产品系列", zap.String("lineName", lineName), zap.String("series", series))
+			send("🚀 启动产品系列 [%s > %s] 定向深度爬取 (并发线程数: %d)...", lineName, series, threads)
+
+			// 先确保本地数据库或远程已加载该产品线下的所有型号
+			allProds, _ := e.repo.GetProductsByProductLineIDAndSeries(lineID, series)
+			if len(allProds) == 0 {
+				e.catCrawler.FetchProductsByLineWithContext(ctx, lineID, linePID)
+				allProds, _ = e.repo.GetProductsByProductLineIDAndSeries(lineID, series)
+			}
+
+			if len(allProds) == 0 {
+				send("⚠️ 未在系列 [%s] 下找到有效产品型号", series)
+				e.notifyFinished(false, "未找到该系列下的型号")
+				return
+			}
+
+			send("✅ 该系列下共发现 %d 个产品型号，启动并发抓取文档...", len(allProds))
+			docCount, wsfBlocked := e.crawlProductsConcurrent(ctx, allProds, lineName, "", send, onProgress)
+			if wsfBlocked {
+				e.notifyFinished(false, "网关安全拦截已熔断")
+				return
+			}
+
+			send("🎉 产品系列 [%s > %s] 爬取完成！共收录 %d 个型号，%d 篇产品文档", lineName, series, len(allProds), docCount)
+			e.notifyFinished(true, "产品系列爬取完成")
+			return
+		}
+
+		// 3. 二级产品线定向爬取
 		if lineID != "" {
 			line, _ := e.repo.GetProductLineByID(lineID)
 			lineName := lineID
@@ -473,5 +514,5 @@ func (e *CrawlerEngine) StartScopedCrawl(
 
 // StartLineCrawl 单独抓取某个指定产品线 (兼容旧调用)
 func (e *CrawlerEngine) StartLineCrawl(lineID string, onLog func(string)) error {
-	return e.StartScopedCrawl("", lineID, "", onLog, nil)
+	return e.StartScopedCrawl("", lineID, "", "", onLog, nil)
 }

@@ -117,14 +117,21 @@ func (h *ServerHandler) GetCategories(c *gin.Context) {
 	success(c, cats)
 }
 
-// GetProducts 获取产品线下的产品系列
+// GetProducts 获取产品线下的产品系列 (支持可选按 series/naviGroup 过滤)
 func (h *ServerHandler) GetProducts(c *gin.Context) {
 	lineID := c.Query("lineId")
 	if lineID == "" {
 		fail(c, 400, "lineId 不能为空")
 		return
 	}
-	prods, err := h.repo.GetProductsByProductLineID(lineID)
+	series := c.Query("series")
+	var prods []store.Product
+	var err error
+	if series != "" {
+		prods, err = h.repo.GetProductsByProductLineIDAndSeries(lineID, series)
+	} else {
+		prods, err = h.repo.GetProductsByProductLineID(lineID)
+	}
 	if err != nil {
 		fail(c, 500, err.Error())
 		return
@@ -272,17 +279,19 @@ func (h *ServerHandler) TriggerLocalScan(c *gin.Context) {
 	success(c, res)
 }
 
-// StartCrawl 启动在线爬虫（支持全量、大类、产品线或单个型号）
+// StartCrawl 启动在线爬虫（支持全量、大类、产品线、产品系列或单个型号）
 func (h *ServerHandler) StartCrawl(c *gin.Context) {
 	var req struct {
 		CategoryID string `json:"categoryId"`
 		LineID     string `json:"lineId"`
+		Series     string `json:"series"`
 		ProductID  string `json:"productId"`
 	}
 	c.ShouldBindJSON(&req)
 	logger.Info("API 接收到启动爬虫请求",
 		zap.String("categoryId", req.CategoryID),
 		zap.String("lineId", req.LineID),
+		zap.String("series", req.Series),
 		zap.String("productId", req.ProductID),
 	)
 
@@ -304,8 +313,8 @@ func (h *ServerHandler) StartCrawl(c *gin.Context) {
 		})
 	}
 
-	if req.CategoryID != "" || req.LineID != "" || req.ProductID != "" {
-		err := h.crawlerEngine.StartScopedCrawl(req.CategoryID, req.LineID, req.ProductID, onLog, onProgress)
+	if req.CategoryID != "" || req.LineID != "" || req.Series != "" || req.ProductID != "" {
+		err := h.crawlerEngine.StartScopedCrawl(req.CategoryID, req.LineID, req.Series, req.ProductID, onLog, onProgress)
 		if err != nil {
 			logger.Warn("API 启动定向爬取失败", zap.Error(err))
 			fail(c, 400, err.Error())

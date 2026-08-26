@@ -114,11 +114,13 @@ func (c *CategoryCrawler) FetchCategories() ([]store.Category, error) {
 		}
 	}
 
-	if len(categories) > 0 {
-		c.repo.UpsertCategories(categories)
-	}
-	if len(productLines) > 0 {
-		c.repo.UpsertProductLines(productLines)
+	if c.repo != nil {
+		if len(categories) > 0 {
+			c.repo.UpsertCategories(categories)
+		}
+		if len(productLines) > 0 {
+			c.repo.UpsertProductLines(productLines)
+		}
 	}
 
 	logger.Info("成功抓取产品大类与产品线",
@@ -159,24 +161,36 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 		Data struct {
 			CategoryName        string `json:"categoryName"`
 			ProductLineName     string `json:"productLineName"`
+			CustomLink          []struct {
+				Title string `json:"title"`
+				Links [][]struct {
+					Name string `json:"name"`
+					URL  string `json:"url"`
+				} `json:"links"`
+			} `json:"customLink"`
 			ProductNaviTermList []struct {
 				ID          string `json:"id"`
 				Name        string `json:"name"`
 				DisplayName string `json:"displayName"`
 				SubTerms    []struct {
-					ID        string `json:"id"`
-					Name      string `json:"name"`
-					NameURL   string `json:"nameUrl"`
-					SubModels []struct {
-						ID      string `json:"id"`
-						Name    string `json:"name"`
-						NameURL string `json:"nameUrl"`
+					ID          string `json:"id"`
+					Name        string `json:"name"`
+					DisplayName string `json:"displayName"`
+					NameURL     string `json:"nameUrl"`
+					SubModels   []struct {
+						ID           string `json:"id"`
+						SubModelID   string `json:"subModelId"`
+						Name         string `json:"name"`
+						SubModelName string `json:"subModelName"`
+						NameURL      string `json:"nameUrl"`
 					} `json:"subModels"`
 				} `json:"subTerms"`
 				SubModels []struct {
-					ID      string `json:"id"`
-					Name    string `json:"name"`
-					NameURL string `json:"nameUrl"`
+					ID           string `json:"id"`
+					SubModelID   string `json:"subModelId"`
+					Name         string `json:"name"`
+					SubModelName string `json:"subModelName"`
+					NameURL      string `json:"nameUrl"`
 				} `json:"subModels"`
 			} `json:"productNaviTermList"`
 		} `json:"data"`
@@ -193,46 +207,31 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 	}
 
 	var products []store.Product
+	seenProducts := make(map[string]bool)
 	now := time.Now()
 
-	for _, nav := range resp.Data.ProductNaviTermList {
-		groupName := nav.Name
-		// 1. 直属型号
-		for _, sm := range nav.SubModels {
-			if sm.ID != "" && sm.Name != "" {
-				products = append(products, store.Product{
-					ID:            sm.ID,
-					ProductLineID: lineID,
-					Name:          sm.Name,
-					NameURL:       sm.NameURL,
-					NaviGroup:     groupName,
-					CreatedAt:     now,
-					UpdatedAt:     now,
-				})
-			}
+	// 1. 解析 customLink（例如：园区网络解决方案中的 CloudCampus, CloudCampus SME；路由器的 CloudWAN, SD-WAN 等）
+	for _, cl := range resp.Data.CustomLink {
+		groupTitle := strings.TrimSpace(cl.Title)
+		if groupTitle == "" {
+			groupTitle = "解决方案"
 		}
-		// 2. subTerms 系列/型号 (如 CloudEngine 58&68&78&88&98, S12700 等)
-		for _, st := range nav.SubTerms {
-			if st.ID != "" && st.Name != "" {
-				products = append(products, store.Product{
-					ID:            st.ID,
-					ProductLineID: lineID,
-					Name:          st.Name,
-					NameURL:       st.NameURL,
-					NaviGroup:     groupName,
-					CreatedAt:     now,
-					UpdatedAt:     now,
-				})
-			}
-			// 3. subTerms 下的细分子型号
-			for _, sm := range st.SubModels {
-				if sm.ID != "" && sm.Name != "" {
+		for _, linkGroup := range cl.Links {
+			for _, item := range linkGroup {
+				name := strings.TrimSpace(item.Name)
+				urlStr := strings.TrimSpace(item.URL)
+				if name == "" || urlStr == "" {
+					continue
+				}
+				pid := extractPidFromURL(urlStr)
+				if pid != "" && !seenProducts[pid] {
+					seenProducts[pid] = true
 					products = append(products, store.Product{
-						ID:            sm.ID,
+						ID:            pid,
 						ProductLineID: lineID,
-						Name:          sm.Name,
-						NameURL:       sm.NameURL,
-						NaviGroup:     groupName + " / " + st.Name,
+						Name:          name,
+						NameURL:       urlStr,
+						NaviGroup:     groupTitle,
 						CreatedAt:     now,
 						UpdatedAt:     now,
 					})
@@ -241,10 +240,64 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 		}
 	}
 
+	// 2. 解析 productNaviTermList（包括数据中心网络解决方案、园区交换机、数据中心交换机等各大导航组）
+	for _, nav := range resp.Data.ProductNaviTermList {
+		groupName := strings.TrimSpace(nav.Name)
+		if groupName == "" {
+			groupName = "产品系列"
+		}
+
+		// (1) subTerms 系列/型号 (如 CloudFabric, Intelligent Fabric, S100&..., S1700&..., CloudEngine 12800&... 等)
+		for _, st := range nav.SubTerms {
+			stID := strings.TrimSpace(st.ID)
+			stName := strings.TrimSpace(st.Name)
+			if stID != "" && stName != "" && !seenProducts[stID] {
+				seenProducts[stID] = true
+				products = append(products, store.Product{
+					ID:            stID,
+					ProductLineID: lineID,
+					Name:          stName,
+					NameURL:       st.NameURL,
+					NaviGroup:     groupName,
+					CreatedAt:     now,
+					UpdatedAt:     now,
+				})
+			}
+		}
+
+		// (2) 直属型号
+		for _, sm := range nav.SubModels {
+			smID := strings.TrimSpace(sm.ID)
+			if smID == "" {
+				smID = strings.TrimSpace(sm.SubModelID)
+			}
+			smName := strings.TrimSpace(sm.Name)
+			if smName == "" {
+				smName = strings.TrimSpace(sm.SubModelName)
+			}
+			if smID != "" && smName != "" && !seenProducts[smID] {
+				seenProducts[smID] = true
+				products = append(products, store.Product{
+					ID:            smID,
+					ProductLineID: lineID,
+					Name:          smName,
+					NameURL:       sm.NameURL,
+					NaviGroup:     groupName,
+					CreatedAt:     now,
+					UpdatedAt:     now,
+				})
+			}
+		}
+	}
+
 	lineName := resp.Data.ProductLineName
 	if lineName == "" {
-		if l, _ := c.repo.GetProductLineByID(lineID); l != nil && l.Name != "" {
-			lineName = l.Name
+		if c.repo != nil {
+			if l, _ := c.repo.GetProductLineByID(lineID); l != nil && l.Name != "" {
+				lineName = l.Name
+			} else {
+				lineName = lineID
+			}
 		} else {
 			lineName = lineID
 		}
@@ -262,27 +315,31 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 		)
 
 		// 容错兜底：若该产品线本身是独立单品/解决方案（华为未分配 sub-model 树，直接挂载版本与文档），将其自身收录为产品型号
-		if line, _ := c.repo.GetProductLineByID(lineID); line != nil && line.ProID != "" {
-			singleProd := store.Product{
-				ID:            line.ProID,
-				ProductLineID: line.ID,
-				Name:          line.Name,
-				NameURL:       line.NameURL,
-				NaviGroup:     "独立产品/解决方案",
-				CreatedAt:     now,
-				UpdatedAt:     now,
+		if c.repo != nil {
+			if line, _ := c.repo.GetProductLineByID(lineID); line != nil && line.ProID != "" {
+				singleProd := store.Product{
+					ID:            line.ProID,
+					ProductLineID: line.ID,
+					Name:          line.Name,
+					NameURL:       line.NameURL,
+					NaviGroup:     "独立产品/解决方案",
+					CreatedAt:     now,
+					UpdatedAt:     now,
+				}
+				products = append(products, singleProd)
+				c.repo.UpsertProducts(products)
+				logger.Info(FormatWorkerMsg(workerTag, fmt.Sprintf("产品线 [%s] 本身为独立单品/解决方案，已作为独立型号自动收录", line.Name)),
+					append([]zap.Field{
+						zap.String("lineName", line.Name),
+						zap.String("productId", line.ProID),
+					}, WorkerZapFields(workerID)...)...,
+				)
 			}
-			products = append(products, singleProd)
-			c.repo.UpsertProducts(products)
-			logger.Info(FormatWorkerMsg(workerTag, fmt.Sprintf("产品线 [%s] 本身为独立单品/解决方案，已作为独立型号自动收录", line.Name)),
-				append([]zap.Field{
-					zap.String("lineName", line.Name),
-					zap.String("productId", line.ProID),
-				}, WorkerZapFields(workerID)...)...,
-			)
 		}
 	} else {
-		c.repo.UpsertProducts(products)
+		if c.repo != nil {
+			c.repo.UpsertProducts(products)
+		}
 		logger.Debug(FormatWorkerMsg(workerTag, fmt.Sprintf("产品线 [%s] 型号入库完成", lineName)),
 			append([]zap.Field{
 				zap.String("lineName", lineName),
@@ -369,11 +426,13 @@ func (c *CategoryCrawler) FetchSubModelsAndVersionsWithContext(ctx context.Conte
 		}
 	}
 
-	if len(subModels) > 0 {
-		c.repo.UpsertSubModels(subModels)
-	}
-	if len(versions) > 0 {
-		c.repo.UpsertVersions(versions)
+	if c.repo != nil {
+		if len(subModels) > 0 {
+			c.repo.UpsertSubModels(subModels)
+		}
+		if len(versions) > 0 {
+			c.repo.UpsertVersions(versions)
+		}
 	}
 
 	logger.Debug(FormatWorkerMsg(workerTag, "子型号与版本解析入库成功"),
@@ -523,13 +582,19 @@ func extractPidFromURL(urlStr string) string {
 	if idx := strings.Index(urlStr, "-pid-"); idx != -1 {
 		rest := urlStr[idx+5:]
 		if qIdx := strings.Index(rest, "?"); qIdx != -1 {
-			return rest[:qIdx]
+			rest = rest[:qIdx]
 		}
-		return rest
+		if sIdx := strings.Index(rest, "/"); sIdx != -1 {
+			rest = rest[:sIdx]
+		}
+		if hIdx := strings.Index(rest, "#"); hIdx != -1 {
+			rest = rest[:hIdx]
+		}
+		return strings.TrimSpace(rest)
 	}
 	u, err := url.Parse(urlStr)
 	if err == nil {
-		return u.Query().Get("pid")
+		return strings.TrimSpace(u.Query().Get("pid"))
 	}
 	return ""
 }

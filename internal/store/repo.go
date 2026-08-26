@@ -122,7 +122,18 @@ func (r *Repository) GetCategoryByID(id string) (*Category, error) {
 // GetProductsByProductLineID 获取产品线下的产品系列
 func (r *Repository) GetProductsByProductLineID(lineID string) ([]Product, error) {
 	var prods []Product
-	err := r.db.Where("product_line_id = ?", lineID).Find(&prods).Error
+	err := r.db.Where("product_line_id = ?", lineID).Order("created_at ASC, id ASC").Find(&prods).Error
+	return prods, err
+}
+
+// GetProductsByProductLineIDAndSeries 根据产品线和系列名称获取产品列表
+func (r *Repository) GetProductsByProductLineIDAndSeries(lineID, series string) ([]Product, error) {
+	var prods []Product
+	query := r.db.Where("product_line_id = ?", lineID)
+	if series != "" {
+		query = query.Where("navi_group = ?", series)
+	}
+	err := query.Order("created_at ASC, id ASC").Find(&prods).Error
 	return prods, err
 }
 
@@ -143,7 +154,8 @@ func (r *Repository) GetSubModelsAndVersions(productID string) ([]SubModel, []Ve
 type DocFilterQuery struct {
 	CategoryID       string `form:"categoryId"`
 	ProductLineID    string `form:"productLineId"`
-	ProductID        string `form:"productId"`
+	Series           string `form:"series"`           // 产品系列（如：园区交换机、园区网络解决方案等）
+	ProductID        string `form:"productId"`        // 具体产品型号
 	VersionID        string `form:"versionId"`
 	SubModelID       string `form:"subModelId"`
 	DocType          string `form:"docType"`          // 全部, HDX, CHM, PDF, 多媒体 等
@@ -169,6 +181,15 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 
 	if q.ProductID != "" {
 		query = query.Where("product_id = ?", q.ProductID)
+	} else if q.Series != "" && q.ProductLineID != "" {
+		// 根据产品线与系列过滤
+		var pids []string
+		r.db.Model(&Product{}).Where("product_line_id = ? AND navi_group = ?", q.ProductLineID, q.Series).Pluck("id", &pids)
+		if len(pids) > 0 {
+			query = query.Where("product_id IN ?", pids)
+		} else {
+			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+		}
 	} else if q.ProductLineID != "" {
 		// 根据产品线过滤
 		var pids []string

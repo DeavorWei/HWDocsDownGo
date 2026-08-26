@@ -27,15 +27,15 @@ type ProductLine struct {
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
-// Product 产品系列/具体产品（如：CloudEngine 58&68&78&88&98, CloudEngine S16700 等）
+// Product 产品系列/具体产品（如：CloudEngine 58&68&78&88&98, CloudEngine S16700 等，支持同一解决方案挂载多个产品线）
 type Product struct {
 	ID            string     `gorm:"primaryKey;column:id" json:"id"`
-	ProductLineID string     `gorm:"column:product_line_id;index" json:"productLineId"`
+	ProductLineID string     `gorm:"primaryKey;column:product_line_id;index" json:"productLineId"`
 	Name          string     `gorm:"column:name;index" json:"name"`
 	NameURL       string     `gorm:"column:name_url" json:"nameUrl"`
 	NaviGroup     string     `gorm:"column:navi_group" json:"naviGroup"`
-	SubModels     []SubModel `gorm:"foreignKey:ProductID" json:"subModels,omitempty"`
-	Versions      []Version  `gorm:"foreignKey:ProductID" json:"versions,omitempty"`
+	SubModels     []SubModel `gorm:"foreignKey:ProductID;references:ID" json:"subModels,omitempty"`
+	Versions      []Version  `gorm:"foreignKey:ProductID;references:ID" json:"versions,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 }
