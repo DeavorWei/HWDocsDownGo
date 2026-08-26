@@ -1779,11 +1779,21 @@
             </div>
             <div>
               <h3 class="text-base font-bold text-slate-900">
-                触发华为安全网关校验 (WSF Check)
+                {{ cookieModalTip ? '华为账号登录权限提示' : '触发华为安全网关校验 (WSF Check)' }}
               </h3>
               <p class="text-xs text-slate-500 mt-0.5">
-                请在下方填入浏览器的有效 Cookie 以解除反爬拦截
+                {{ cookieModalTip || '请在下方填入浏览器的有效 Cookie 以解除反爬或登录拦截' }}
               </p>
+            </div>
+          </div>
+
+          <div
+            v-if="cookieModalTip"
+            class="text-xs text-rose-800 bg-rose-50 p-3 rounded-xl border border-rose-200 mb-3 flex items-start space-x-2 leading-relaxed"
+          >
+            <i class="fa-solid fa-triangle-exclamation text-rose-500 mt-0.5 flex-shrink-0"></i>
+            <div>
+              <span class="font-bold">权限说明：</span>{{ cookieModalTip }}，由于该文档属于受保护资源，请在浏览器中<strong>登录您的华为企业技术支持账号</strong>后复制 Cookie。
             </div>
           </div>
 
@@ -1794,10 +1804,10 @@
               <i class="fa-solid fa-circle-info text-amber-600"></i>
               <span>Cookie 获取指引：</span>
             </div>
-            <p>1. 使用 Chrome 或 Edge 打开并登录 <a href="https://support.huawei.com/enterprise/zh/" target="_blank" class="text-blue-600 underline font-medium">华为企业支持官网</a>；</p>
+            <p>1. 使用 Chrome 或 Edge 打开并登录 <a href="https://support.huawei.com/enterprise/zh/" target="_blank" class="text-blue-600 underline font-medium">华为企业支持官网</a>（登录您的账号）；</p>
             <p>2. 按 <kbd class="px-1 py-0.5 bg-white border border-slate-300 rounded font-mono text-[10px]">F12</kbd> 打开开发者工具，切换到 <strong>Network (网络)</strong> 标签；</p>
             <p>3. 刷新页面或点击任意产品，在请求的 <strong>Request Headers</strong> 中找到并复制整段 <code>Cookie</code>；</p>
-            <p>4. 将复制的内容粘贴到下方文本框中，点击【保存并应用】即可继续爬取。</p>
+            <p>4. 将复制的内容粘贴到下方文本框中，点击【保存并应用】后重新发起下载/爬取即可。</p>
           </div>
 
           <div class="space-y-2 mb-5">
@@ -1896,6 +1906,7 @@
 
           // 华为网关拦截与 Cookie 录入弹窗
           const showCookieModal = ref(false);
+          const cookieModalTip = ref("");
           const tempCookieInput = ref("");
           const isSavingCookie = ref(false);
 
@@ -2543,7 +2554,8 @@
             showToast("下载目录位置: " + path, "info");
           };
 
-          const openCookieModal = () => {
+          const openCookieModal = (tip = "") => {
+            cookieModalTip.value = tip || "";
             tempCookieInput.value = configForm.value.customCookie || config.value.customCookie || "";
             showCookieModal.value = true;
           };
@@ -2634,6 +2646,10 @@
                     }
                     fetchStats();
                   }
+                } else if (msg.type === "DOWNLOAD_AUTH_REQUIRED" && msg.data) {
+                  const data = msg.data;
+                  showToast(`⚠️ 下载失败：【${data.docName || ''}】需要华为账号登录权限，请录入已登录 Cookie`, "error");
+                  openCookieModal(`下载文档【${data.docName || ''}】需要华为账号登录权限`);
                 } else if (msg.type === "CRAWLER_LOG" && msg.data) {
                   crawlerLogs.value.push(msg.data);
                   if (crawlerLogs.value.length > 500) crawlerLogs.value.shift();
@@ -2922,6 +2938,7 @@
             saveSettings,
             openLocalFolder,
             showCookieModal,
+            cookieModalTip,
             tempCookieInput,
             isSavingCookie,
             openCookieModal,

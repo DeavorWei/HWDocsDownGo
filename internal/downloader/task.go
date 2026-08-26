@@ -96,6 +96,15 @@ func (r *DownloadTaskRunner) Run() error {
 	r.task.SavePath = finalPath
 	r.task.DownloadURL = downloadURL
 
+	// 检查并清理已有伪 HTML 登录网页文件或 0 字节损坏文件
+	if _, statErr := os.Stat(finalPath); statErr == nil {
+		if isBad, reason := isFileCorruptedOrAuthHtml(finalPath); isBad {
+			logger.Warn("检测到历史伪 HTML 登录文件，已自动清理", zap.String("finalPath", finalPath), zap.String("reason", reason))
+			_ = os.Remove(finalPath)
+			r.repo.UpdateDocDownloaded(r.task.DocNID, 0, "")
+		}
+	}
+
 	// 2. 检查配置中的线程数 (1-32，默认 1)
 	cfg := config.GetConfig()
 	fileThreads := 1
@@ -123,17 +132,74 @@ func (r *DownloadTaskRunner) Run() error {
 	return r.downloadSingleThread(downloadURL, tempPath, finalPath)
 }
 
+func (r *DownloadTaskRunner) applyHeaders(req *http.Request) {
+	cfg := config.GetConfig()
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36")
+	req.Header.Set("Referer", fmt.Sprintf("https://support.huawei.com/enterprise/zh/doc/%s", r.task.DocNID))
+	cookieStr := "supportelang=zh; lang=zh; support_last_vist=enterprise; browsehappy=browsehappy"
+	if strings.TrimSpace(cfg.CustomCookie) != "" {
+		cleaned := strings.ReplaceAll(cfg.CustomCookie, "\r", "")
+		cleaned = strings.ReplaceAll(cleaned, "\n", " ")
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned != "" {
+			cookieStr = cookieStr + "; " + cleaned
+		}
+	}
+	req.Header.Set("Cookie", cookieStr)
+}
+
+func newDownloadHttpClient(timeout time.Duration, maxIdleConns int) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			urlStr := req.URL.String()
+			if strings.Contains(req.URL.Host, "uniportal") ||
+				strings.Contains(req.URL.Path, "login") ||
+				strings.Contains(urlStr, "uniportal") ||
+				(strings.Contains(urlStr, "redirect") && strings.Contains(urlStr, "login")) {
+				return fmt.Errorf("AUTH_REQUIRED: 目标直链重定向至华为统一身份认证登录页 (%s)", urlStr)
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+		Transport: &http.Transport{
+			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       60 * time.Second,
+			MaxIdleConns:          maxIdleConns,
+			MaxIdleConnsPerHost:   maxIdleConns,
+		},
+	}
+}
+
+func isHtmlOrAuthPage(resp *http.Response, firstBuf []byte) (bool, string) {
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if strings.Contains(ct, "text/html") {
+		return true, "返回内容为网页 (text/html)"
+	}
+	bodySnippet := strings.ToLower(string(firstBuf))
+	if strings.Contains(bodySnippet, "<!doctype html") ||
+		strings.Contains(bodySnippet, "<html") ||
+		strings.Contains(bodySnippet, "uniportal") ||
+		strings.Contains(bodySnippet, "login") {
+		return true, "检测到统一认证登录页面内容"
+	}
+	return false, ""
+}
+
 // probeRangeSupport 探测目标服务器是否支持 Range 分片及获取文件真实总大小 (复用连接池)
 func (r *DownloadTaskRunner) probeRangeSupport(downloadURL string) (int64, bool) {
 	req, err := http.NewRequestWithContext(r.ctx, "GET", downloadURL, nil)
 	if err != nil {
 		return 0, false
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+	r.applyHeaders(req)
 	req.Header.Set("Range", "bytes=0-0")
 
-	resp, err := probeClient.Do(req)
+	client := newDownloadHttpClient(10*time.Second, 10)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, false
 	}
@@ -212,13 +278,7 @@ func (r *DownloadTaskRunner) downloadMultiThread(downloadURL, tempPath, finalPat
 		}
 	}()
 
-	client := &http.Client{
-		Timeout: 0,
-		Transport: &http.Transport{
-			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-			MaxIdleConnsPerHost: numThreads,
-		},
-	}
+	client := newDownloadHttpClient(0, numThreads)
 
 	for i := 0; i < numThreads; i++ {
 		startByte := int64(i) * chunkSize
@@ -257,22 +317,37 @@ func (r *DownloadTaskRunner) downloadMultiThread(downloadURL, tempPath, finalPat
 				cancel()
 				return
 			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-			req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+			r.applyHeaders(req)
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
 			resp, doErr := client.Do(req)
 			if doErr != nil {
 				if ctx.Err() == nil {
-					select {
-					case errChan <- fmt.Errorf("分片 %d 下载网络错误: %w", chunkIdx, doErr):
-					default:
+					if strings.Contains(doErr.Error(), "AUTH_REQUIRED") {
+						select {
+						case errChan <- fmt.Errorf("该文档需要华为账号登录权限 (请录入有效 Cookie)"):
+						default:
+						}
+					} else {
+						select {
+						case errChan <- fmt.Errorf("分片 %d 下载网络错误: %w", chunkIdx, doErr):
+						default:
+						}
 					}
 					cancel()
 				}
 				return
 			}
 			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				select {
+				case errChan <- fmt.Errorf("该文档需要华为账号登录权限 (HTTP %d，请录入有效 Cookie)", resp.StatusCode):
+				default:
+				}
+				cancel()
+				return
+			}
 
 			if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
 				select {
@@ -382,31 +457,33 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 		return err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://support.huawei.com/enterprise/zh/index.html")
+	r.applyHeaders(req)
 	if existingBytes > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingBytes))
 	}
 
-	client := &http.Client{
-		Timeout: 0,
-		Transport: &http.Transport{
-			TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
-			ResponseHeaderTimeout: 30 * time.Second,
-			IdleConnTimeout:       60 * time.Second,
-		},
-	}
-
+	client := newDownloadHttpClient(0, 10)
 	resp, err := client.Do(req)
 	if err != nil {
 		if r.ctx.Err() != nil {
 			r.pause()
 			return nil
 		}
+		if strings.Contains(err.Error(), "AUTH_REQUIRED") {
+			_ = os.Remove(tempPath)
+			r.fail("下载失败：该文档需要华为账号登录权限 (请在【系统设置】中录入有效登录态 Cookie)")
+			return err
+		}
 		r.fail(fmt.Sprintf("连接服务器失败: %v", err))
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		_ = os.Remove(tempPath)
+		r.fail(fmt.Sprintf("下载失败：该文档需要华为账号登录权限 (HTTP %d，请录入有效 Cookie)", resp.StatusCode))
+		return fmt.Errorf("需要登录权限: %d", resp.StatusCode)
+	}
 
 	var totalBytes int64
 	var file *os.File
@@ -419,6 +496,7 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 		totalBytes = resp.ContentLength
 		file, err = os.Create(tempPath)
 	} else {
+		_ = os.Remove(tempPath)
 		errMsg := fmt.Sprintf("HTTP 响应错误: %d", resp.StatusCode)
 		r.fail(errMsg)
 		return fmt.Errorf("%s", errMsg)
@@ -448,6 +526,17 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
+			// 如果是首个数据块，检查是否为 HTML 网页/登录页
+			if downloadedSoFar == 0 {
+				if isHtml, reason := isHtmlOrAuthPage(resp, buf[:n]); isHtml {
+					file.Close()
+					_ = os.Remove(tempPath)
+					errMsg := fmt.Sprintf("下载失败：该文档需要华为账号登录权限 (%s，请录入有效 Cookie)", reason)
+					r.fail(errMsg)
+					return fmt.Errorf("%s", errMsg)
+				}
+			}
+
 			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
 				r.fail(fmt.Sprintf("写入磁盘失败: %v", writeErr))
 				return writeErr
@@ -481,8 +570,16 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 
 	file.Close()
 
-	// 【关键修复】：退出读取循环后强制断言长度一致性，提前 EOF 判定为下载失败
+	// 退出读取循环后强制断言长度一致性与有效性
+	if downloadedSoFar <= 0 {
+		_ = os.Remove(tempPath)
+		errMsg := "下载失败：获得文件大小为 0 字节，可能需要登录权限或直链已失效"
+		r.fail(errMsg)
+		return fmt.Errorf("%s", errMsg)
+	}
+
 	if r.task.TotalBytes > 0 && downloadedSoFar != r.task.TotalBytes {
+		_ = os.Remove(tempPath)
 		errMsg := fmt.Sprintf("文件下载不完整: 预期 %d 字节, 实际获得 %d 字节", r.task.TotalBytes, downloadedSoFar)
 		r.fail(errMsg)
 		return fmt.Errorf("%s", errMsg)
@@ -586,5 +683,39 @@ func sanitizeFileName(name string) string {
 		}
 	}
 	return result
+}
+
+// isFileCorruptedOrAuthHtml 检查文件是否为登录重定向生成的伪 HTML 页面或 0 字节损坏文件
+func isFileCorruptedOrAuthHtml(filePath string) (bool, string) {
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		return true, "无法读取文件状态"
+	}
+	if fi.Size() == 0 {
+		return true, "文件大小为 0 字节"
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext != ".html" && ext != ".htm" {
+		if fi.Size() < 500*1024 {
+			f, err := os.Open(filePath)
+			if err != nil {
+				return false, ""
+			}
+			defer f.Close()
+			buf := make([]byte, 512)
+			n, _ := f.Read(buf)
+			if n > 0 {
+				content := strings.ToLower(string(buf[:n]))
+				if strings.Contains(content, "<!doctype html") ||
+					strings.Contains(content, "<html") ||
+					strings.Contains(content, "uniportal") ||
+					strings.Contains(content, "login") ||
+					strings.Contains(content, "<head>") {
+					return true, "文件内容为 HTML 登录或重定向网页"
+				}
+			}
+		}
+	}
+	return false, ""
 }
 

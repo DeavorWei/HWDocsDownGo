@@ -63,6 +63,18 @@ func NewServerHandler(
 			"type": "DOWNLOAD_PROGRESS",
 			"data": event,
 		})
+		if event.Status == downloader.StatusFailed &&
+			(strings.Contains(event.ErrorMsg, "登录") || strings.Contains(event.ErrorMsg, "Cookie") || strings.Contains(event.ErrorMsg, "权限")) {
+			h.hub.Broadcast(map[string]interface{}{
+				"type": "DOWNLOAD_AUTH_REQUIRED",
+				"data": gin.H{
+					"taskId":   event.TaskID,
+					"docNid":   event.DocNID,
+					"docName":  event.DocName,
+					"errorMsg": event.ErrorMsg,
+				},
+			})
+		}
 	})
 
 	// 监听爬虫结束事件并广播

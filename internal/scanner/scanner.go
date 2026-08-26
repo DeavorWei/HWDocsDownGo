@@ -121,6 +121,17 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 		}
 
 		if targetDoc != nil {
+			// 防御性校验：检查文件是否为登录重定向生成的伪 HTML 页面或 0 字节损坏文件
+			if isBad, reason := IsCorruptedOrAuthHtmlFile(path); isBad {
+				logger.Warn("扫描检测到登录重定向伪网页文件或损坏文件，已自动删除",
+					zap.String("path", path),
+					zap.String("reason", reason),
+					zap.String("docName", targetDoc.Name),
+				)
+				_ = os.Remove(path)
+				return nil
+			}
+
 			if _, already := matchedMap[targetDoc.NID]; !already {
 				matchedMap[targetDoc.NID] = path
 				logger.Debug("本地文件精准匹配到文档",
@@ -185,4 +196,39 @@ func normalizeName(s string) string {
 		"】", "",
 	)
 	return replacer.Replace(s)
+}
+
+// IsCorruptedOrAuthHtmlFile 检查文件是否为登录重定向生成的伪 HTML 页面或 0 字节损坏文件
+func IsCorruptedOrAuthHtmlFile(filePath string) (bool, string) {
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		return true, "无法读取文件状态"
+	}
+	if fi.Size() == 0 {
+		return true, "文件大小为 0 字节"
+	}
+	ext := strings.ToLower(filepath.Ext(filePath))
+	// 对于 zip, hdx, chm, pdf, docx, 7z 等非 html 格式，若大小较小且内容是 HTML 则为重定向假文件
+	if ext != ".html" && ext != ".htm" {
+		if fi.Size() < 500*1024 { // 小于 500KB 嗅探文件头
+			f, err := os.Open(filePath)
+			if err != nil {
+				return false, ""
+			}
+			defer f.Close()
+			buf := make([]byte, 512)
+			n, _ := f.Read(buf)
+			if n > 0 {
+				content := strings.ToLower(string(buf[:n]))
+				if strings.Contains(content, "<!doctype html") ||
+					strings.Contains(content, "<html") ||
+					strings.Contains(content, "uniportal") ||
+					strings.Contains(content, "login") ||
+					strings.Contains(content, "<head>") {
+					return true, "文件内容为 HTML 登录或重定向网页"
+				}
+			}
+		}
+	}
+	return false, ""
 }
