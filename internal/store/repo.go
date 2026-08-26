@@ -141,12 +141,12 @@ func (r *Repository) GetProductsByProductLineID(lineID string) ([]Product, error
 	return prods, err
 }
 
-// GetProductsByProductLineIDAndSeries 根据产品线和系列名称获取产品列表
+// GetProductsByProductLineIDAndSeries 根据产品线和系列名称获取产品列表 (支持同一型号归属多个系列标签)
 func (r *Repository) GetProductsByProductLineIDAndSeries(lineID, series string) ([]Product, error) {
 	var prods []Product
 	query := r.db.Where("product_line_id = ?", lineID)
 	if series != "" {
-		query = query.Where("navi_group = ?", series)
+		query = query.Where("instr(',' || navi_group || ',', ',' || ? || ',') > 0", series)
 	}
 	err := query.Order("created_at ASC, id ASC").Find(&prods).Error
 	return prods, err
@@ -191,20 +191,20 @@ type DocFilterResult struct {
 	Items    []Document `json:"items"`
 }
 
-// QueryDocuments 多条件组合筛选文档 (支持多关键词 AND 检索与正则表达式高级搜索)
-func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) {
+// buildDocFilterQuery 构造文档组合筛选的 GORM 查询对象
+func (r *Repository) buildDocFilterQuery(q DocFilterQuery) (*gorm.DB, error) {
 	query := r.db.Model(&Document{})
 
 	if q.ProductID != "" {
 		query = query.Where("product_id = ?", q.ProductID)
 	} else if q.Series != "" && q.ProductLineID != "" {
-		// 根据产品线与系列过滤
+		// 根据产品线与系列过滤 (支持同一型号多系列标签)
 		var pids []string
-		r.db.Model(&Product{}).Where("product_line_id = ? AND navi_group = ?", q.ProductLineID, q.Series).Pluck("id", &pids)
+		r.db.Model(&Product{}).Where("product_line_id = ? AND instr(',' || navi_group || ',', ',' || ? || ',') > 0", q.ProductLineID, q.Series).Pluck("id", &pids)
 		if len(pids) > 0 {
 			query = query.Where("product_id IN ?", pids)
 		} else {
-			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+			return nil, nil
 		}
 	} else if q.ProductLineID != "" {
 		// 根据产品线过滤
@@ -213,7 +213,7 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 		if len(pids) > 0 {
 			query = query.Where("product_id IN ?", pids)
 		} else {
-			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+			return nil, nil
 		}
 	} else if q.CategoryID != "" {
 		// 根据产品大类过滤
@@ -225,10 +225,10 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 			if len(pids) > 0 {
 				query = query.Where("product_id IN ?", pids)
 			} else {
-				return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+				return nil, nil
 			}
 		} else {
-			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+			return nil, nil
 		}
 	}
 
@@ -249,6 +249,79 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	}
 	if q.IsDownloaded != nil {
 		query = query.Where("is_downloaded = ?", *q.IsDownloaded)
+	}
+
+	return query, nil
+}
+
+// QueryDocumentNIDs 获取当前筛选条件下的所有文档 NID 列表（用于跨页全选与批量下载）
+func (r *Repository) QueryDocumentNIDs(q DocFilterQuery) ([]string, error) {
+	query, err := r.buildDocFilterQuery(q)
+	if err != nil {
+		return nil, err
+	}
+	if query == nil {
+		return []string{}, nil
+	}
+
+	kwText := strings.TrimSpace(q.Keyword)
+	isRegexSearch := q.IsRegex || strings.HasPrefix(kwText, "regex:")
+	if strings.HasPrefix(kwText, "regex:") {
+		kwText = strings.TrimPrefix(kwText, "regex:")
+		kwText = strings.TrimSpace(kwText)
+	}
+
+	// 1. 正则表达式模式
+	if isRegexSearch && kwText != "" {
+		re, err := regexp.Compile("(?i)" + kwText)
+		if err != nil {
+			return []string{}, nil
+		}
+		var candidateDocs []Document
+		if err := query.Find(&candidateDocs).Error; err != nil {
+			return nil, err
+		}
+		var nids []string
+		for _, d := range candidateDocs {
+			if re.MatchString(d.Name) ||
+				re.MatchString(d.FileName) ||
+				re.MatchString(d.ProductName) ||
+				re.MatchString(d.NID) ||
+				re.MatchString(d.DocCategory) ||
+				re.MatchString(d.DocCategoryGroup) ||
+				re.MatchString(d.ProductLineName) ||
+				re.MatchString(d.CategoryName) {
+				nids = append(nids, d.NID)
+			}
+		}
+		return nids, nil
+	}
+
+	// 2. 多关键词 AND 模式
+	if kwText != "" {
+		tokens := strings.Fields(kwText)
+		for _, token := range tokens {
+			kw := "%" + token + "%"
+			query = query.Where("(name LIKE ? OR file_name LIKE ? OR product_name LIKE ? OR nid LIKE ? OR doc_category LIKE ? OR doc_category_group LIKE ? OR product_line_name LIKE ? OR category_name LIKE ?)",
+				kw, kw, kw, kw, kw, kw, kw, kw)
+		}
+	}
+
+	var nids []string
+	if err := query.Pluck("nid", &nids).Error; err != nil {
+		return nil, err
+	}
+	return nids, nil
+}
+
+// QueryDocuments 多条件组合筛选文档 (支持多关键词 AND 检索与正则表达式高级搜索)
+func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) {
+	query, err := r.buildDocFilterQuery(q)
+	if err != nil {
+		return nil, err
+	}
+	if query == nil {
+		return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
 	}
 
 	if q.Page <= 0 {
@@ -330,7 +403,7 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	}
 
 	var docs []Document
-	err := query.Order("is_downloaded DESC, is_new_version DESC, publish_date DESC, name ASC").Offset(offset).Limit(q.PageSize).Find(&docs).Error
+	err = query.Order("is_downloaded DESC, is_new_version DESC, publish_date DESC, name ASC").Offset(offset).Limit(q.PageSize).Find(&docs).Error
 	if err != nil {
 		return nil, err
 	}
@@ -541,10 +614,18 @@ func (r *Repository) UpdateDownloadTaskProgress(id string, downloaded int64, tot
 	}).Error
 }
 
-// GetAllDownloadTasks 获取所有下载任务
+// GetAllDownloadTasks 获取所有下载任务 (下载中与排队中置顶，已完成排在最后)
 func (r *Repository) GetAllDownloadTasks() ([]DownloadTask, error) {
 	var tasks []DownloadTask
-	err := r.db.Order("created_at DESC").Find(&tasks).Error
+	err := r.db.Order(`
+		CASE status 
+			WHEN 1 THEN 1 
+			WHEN 0 THEN 2 
+			WHEN 4 THEN 3 
+			WHEN 3 THEN 4 
+			WHEN 2 THEN 5 
+			ELSE 6 
+		END ASC, updated_at DESC, created_at DESC`).Find(&tasks).Error
 	return tasks, err
 }
 

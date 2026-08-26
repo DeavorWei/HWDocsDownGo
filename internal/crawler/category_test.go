@@ -131,19 +131,33 @@ func TestParseCustomLinkAndNaviTerms(t *testing.T) {
 		t.Fatalf("Unmarshal error: %v", err)
 	}
 
-	seen := make(map[string]bool)
 	type ProdItem struct {
 		ID        string
 		Name      string
 		NaviGroup string
 	}
 	var products []ProdItem
+	productMap := make(map[string]*ProdItem)
+	productGroups := make(map[string][]string)
+
+	addGroup := func(id string, group string) {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return
+		}
+		for _, g := range productGroups[id] {
+			if g == group {
+				return
+			}
+		}
+		productGroups[id] = append(productGroups[id], group)
+	}
 
 	// 1. CustomLink
 	for _, cl := range resp.Data.CustomLink {
 		groupTitle := strings.TrimSpace(cl.Title)
 		if groupTitle == "" {
-			groupTitle = "解决方案"
+			groupTitle = "推荐产品"
 		}
 		for _, linkGroup := range cl.Links {
 			for _, item := range linkGroup {
@@ -153,13 +167,14 @@ func TestParseCustomLinkAndNaviTerms(t *testing.T) {
 					continue
 				}
 				pid := extractPidFromURL(urlStr)
-				if pid != "" && !seen[pid] {
-					seen[pid] = true
-					products = append(products, ProdItem{
-						ID:        pid,
-						Name:      name,
-						NaviGroup: groupTitle,
-					})
+				if pid != "" {
+					addGroup(pid, groupTitle)
+					if _, exists := productMap[pid]; !exists {
+						productMap[pid] = &ProdItem{
+							ID:   pid,
+							Name: name,
+						}
+					}
 				}
 			}
 		}
@@ -171,15 +186,21 @@ func TestParseCustomLinkAndNaviTerms(t *testing.T) {
 		for _, st := range nav.SubTerms {
 			stID := strings.TrimSpace(st.ID)
 			stName := strings.TrimSpace(st.Name)
-			if stID != "" && stName != "" && !seen[stID] {
-				seen[stID] = true
-				products = append(products, ProdItem{
-					ID:        stID,
-					Name:      stName,
-					NaviGroup: groupName,
-				})
+			if stID != "" && stName != "" {
+				addGroup(stID, groupName)
+				if _, exists := productMap[stID]; !exists {
+					productMap[stID] = &ProdItem{
+						ID:   stID,
+						Name: stName,
+					}
+				}
 			}
 		}
+	}
+
+	for id, p := range productMap {
+		p.NaviGroup = strings.Join(productGroups[id], ",")
+		products = append(products, *p)
 	}
 
 	if len(products) != 13 {
@@ -206,7 +227,7 @@ func TestParseCustomLinkAndNaviTerms(t *testing.T) {
 	}
 
 	for id, name := range expectedIDs {
-		if !seen[id] {
+		if productMap[id] == nil {
 			t.Errorf("Missing expected product: %s (%s)", name, id)
 		}
 	}

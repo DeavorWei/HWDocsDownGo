@@ -215,6 +215,24 @@ func (h *ServerHandler) QueryDocuments(c *gin.Context) {
 	success(c, res)
 }
 
+// GetFilteredDocNIDs 获取当前筛选条件下的所有文档 NID 列表 (用于跨页全选与批量下载)
+func (h *ServerHandler) GetFilteredDocNIDs(c *gin.Context) {
+	var q store.DocFilterQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		fail(c, 400, "参数格式错误")
+		return
+	}
+	if c.Query("isRegex") == "true" || c.Query("isRegex") == "1" {
+		q.IsRegex = true
+	}
+	nids, err := h.repo.QueryDocumentNIDs(q)
+	if err != nil {
+		fail(c, 500, err.Error())
+		return
+	}
+	success(c, nids)
+}
+
 // AddDownloadTask 添加下载任务
 func (h *ServerHandler) AddDownloadTask(c *gin.Context) {
 	var req struct {

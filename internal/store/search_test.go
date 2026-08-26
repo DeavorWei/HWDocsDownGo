@@ -85,4 +85,13 @@ func TestMultiKeywordAndRegexSearch(t *testing.T) {
 	if err != nil || res6.Total != 0 {
 		t.Fatalf("Expected 0 docs for invalid regex, got %d (err: %v)", res6.Total, err)
 	}
+
+	// 7. 测试 QueryDocumentNIDs 提取所有筛选文档 NID 列表
+	nids, err := repo.QueryDocumentNIDs(DocFilterQuery{Keyword: "CloudEngine"})
+	if err != nil || len(nids) != 2 {
+		t.Fatalf("Expected 2 nids for 'CloudEngine', got %d (err: %v)", len(nids), err)
+	}
+	if nids[0] != "EDOC110001" && nids[1] != "EDOC110001" {
+		t.Fatalf("Expected nids to contain EDOC110001, got %v", nids)
+	}
 }

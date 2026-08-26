@@ -610,9 +610,37 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 
 func (r *DownloadTaskRunner) notifyProgress(speedKBps float64) {
 	var progress float64
-	if r.task.TotalBytes > 0 {
+	var speedStr string
+
+	if r.task.Status == int(StatusCompleted) {
+		progress = 100.0
+		speedKBps = 0
+		speedStr = ""
+		r.task.DownloadedBytes = r.task.TotalBytes
+	} else if r.task.Status == int(StatusFailed) || r.task.Status == int(StatusPaused) {
+		if r.task.TotalBytes > 0 {
+			progress = float64(r.task.DownloadedBytes) / float64(r.task.TotalBytes) * 100.0
+		}
+		speedKBps = 0
+		speedStr = ""
+	} else if r.task.TotalBytes > 0 {
 		progress = float64(r.task.DownloadedBytes) / float64(r.task.TotalBytes) * 100.0
+		if progress > 99.9 {
+			progress = 99.9 // 未完成落盘校验前最高展示 99.9%，杜绝提前假死
+		}
+		if speedKBps > 1024 {
+			speedStr = fmt.Sprintf("%.2f MB/s", speedKBps/1024.0)
+		} else {
+			speedStr = fmt.Sprintf("%.1f KB/s", speedKBps)
+		}
+	} else {
+		if speedKBps > 1024 {
+			speedStr = fmt.Sprintf("%.2f MB/s", speedKBps/1024.0)
+		} else {
+			speedStr = fmt.Sprintf("%.1f KB/s", speedKBps)
+		}
 	}
+
 	r.task.Progress = progress
 	r.task.SpeedKBps = speedKBps
 
@@ -620,12 +648,6 @@ func (r *DownloadTaskRunner) notifyProgress(speedKBps float64) {
 	r.repo.UpdateDownloadTaskProgress(r.task.ID, r.task.DownloadedBytes, r.task.TotalBytes, progress, speedKBps, r.task.Status, r.task.ErrorMsg)
 
 	if r.onProgress != nil {
-		var speedStr string
-		if speedKBps > 1024 {
-			speedStr = fmt.Sprintf("%.2f MB/s", speedKBps/1024.0)
-		} else {
-			speedStr = fmt.Sprintf("%.1f KB/s", speedKBps)
-		}
 		r.onProgress(ProgressEvent{
 			TaskID:          r.task.ID,
 			DocNID:          r.task.DocNID,
@@ -647,6 +669,12 @@ func (r *DownloadTaskRunner) notifyProgress(speedKBps float64) {
 func (r *DownloadTaskRunner) fail(msg string) {
 	r.task.Status = int(StatusFailed)
 	r.task.ErrorMsg = msg
+	logger.Error("❌ 文档下载失败",
+		zap.String("taskId", r.task.ID),
+		zap.String("docNid", r.task.DocNID),
+		zap.String("docName", r.task.DocName),
+		zap.String("error", msg),
+	)
 	r.notifyProgress(0)
 }
 

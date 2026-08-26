@@ -51,6 +51,7 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 		apiGroup.GET("/submodels-versions", h.GetSubModelsAndVersions)
 		apiGroup.GET("/doc-categories", h.GetDocCategories)
 		apiGroup.GET("/documents", h.QueryDocuments)
+		apiGroup.GET("/documents/nids", h.GetFilteredDocNIDs)
 		apiGroup.POST("/download", h.AddDownloadTask)
 		apiGroup.GET("/tasks", h.GetAllTasks)
 		apiGroup.POST("/tasks/:id/pause", h.PauseTask)

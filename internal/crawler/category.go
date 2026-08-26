@@ -206,15 +206,28 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 		return nil, fmt.Errorf("解析产品型号树 JSON 失败: %w", err)
 	}
 
-	var products []store.Product
-	seenProducts := make(map[string]bool)
+	productMap := make(map[string]*store.Product)
+	productGroups := make(map[string][]string)
 	now := time.Now()
 
-	// 1. 解析 customLink（例如：园区网络解决方案中的 CloudCampus, CloudCampus SME；路由器的 CloudWAN, SD-WAN 等）
+	addGroup := func(id string, group string) {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return
+		}
+		for _, g := range productGroups[id] {
+			if g == group {
+				return
+			}
+		}
+		productGroups[id] = append(productGroups[id], group)
+	}
+
+	// 1. 解析 customLink（包括“推荐产品”、“解决方案”等所有置顶分组）
 	for _, cl := range resp.Data.CustomLink {
 		groupTitle := strings.TrimSpace(cl.Title)
 		if groupTitle == "" {
-			groupTitle = "解决方案"
+			groupTitle = "推荐产品"
 		}
 		for _, linkGroup := range cl.Links {
 			for _, item := range linkGroup {
@@ -224,44 +237,46 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 					continue
 				}
 				pid := extractPidFromURL(urlStr)
-				if pid != "" && !seenProducts[pid] {
-					seenProducts[pid] = true
-					products = append(products, store.Product{
-						ID:            pid,
-						ProductLineID: lineID,
-						Name:          name,
-						NameURL:       urlStr,
-						NaviGroup:     groupTitle,
-						CreatedAt:     now,
-						UpdatedAt:     now,
-					})
+				if pid != "" {
+					addGroup(pid, groupTitle)
+					if _, exists := productMap[pid]; !exists {
+						productMap[pid] = &store.Product{
+							ID:            pid,
+							ProductLineID: lineID,
+							Name:          name,
+							NameURL:       urlStr,
+							CreatedAt:     now,
+							UpdatedAt:     now,
+						}
+					}
 				}
 			}
 		}
 	}
 
-	// 2. 解析 productNaviTermList（包括数据中心网络解决方案、园区交换机、数据中心交换机等各大导航组）
+	// 2. 解析 productNaviTermList（包括 防火墙&VPN网关、入侵防御&检测系统 等所有正规业务系列）
 	for _, nav := range resp.Data.ProductNaviTermList {
 		groupName := strings.TrimSpace(nav.Name)
 		if groupName == "" {
 			groupName = "产品系列"
 		}
 
-		// (1) subTerms 系列/型号 (如 CloudFabric, Intelligent Fabric, S100&..., S1700&..., CloudEngine 12800&... 等)
+		// (1) subTerms 系列/型号 (如 USG 系列、SVN5600、SVN5800 等)
 		for _, st := range nav.SubTerms {
 			stID := strings.TrimSpace(st.ID)
 			stName := strings.TrimSpace(st.Name)
-			if stID != "" && stName != "" && !seenProducts[stID] {
-				seenProducts[stID] = true
-				products = append(products, store.Product{
-					ID:            stID,
-					ProductLineID: lineID,
-					Name:          stName,
-					NameURL:       st.NameURL,
-					NaviGroup:     groupName,
-					CreatedAt:     now,
-					UpdatedAt:     now,
-				})
+			if stID != "" && stName != "" {
+				addGroup(stID, groupName)
+				if _, exists := productMap[stID]; !exists {
+					productMap[stID] = &store.Product{
+						ID:            stID,
+						ProductLineID: lineID,
+						Name:          stName,
+						NameURL:       st.NameURL,
+						CreatedAt:     now,
+						UpdatedAt:     now,
+					}
+				}
 			}
 		}
 
@@ -275,19 +290,31 @@ func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, li
 			if smName == "" {
 				smName = strings.TrimSpace(sm.SubModelName)
 			}
-			if smID != "" && smName != "" && !seenProducts[smID] {
-				seenProducts[smID] = true
-				products = append(products, store.Product{
-					ID:            smID,
-					ProductLineID: lineID,
-					Name:          smName,
-					NameURL:       sm.NameURL,
-					NaviGroup:     groupName,
-					CreatedAt:     now,
-					UpdatedAt:     now,
-				})
+			if smID != "" && smName != "" {
+				addGroup(smID, groupName)
+				if _, exists := productMap[smID]; !exists {
+					productMap[smID] = &store.Product{
+						ID:            smID,
+						ProductLineID: lineID,
+						Name:          smName,
+						NameURL:       sm.NameURL,
+						CreatedAt:     now,
+						UpdatedAt:     now,
+					}
+				}
 			}
 		}
+	}
+
+	var products []store.Product
+	for id, p := range productMap {
+		groups := productGroups[id]
+		if len(groups) > 0 {
+			p.NaviGroup = strings.Join(groups, ",")
+		} else {
+			p.NaviGroup = "其他"
+		}
+		products = append(products, *p)
 	}
 
 	lineName := resp.Data.ProductLineName

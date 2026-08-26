@@ -197,72 +197,6 @@
 
       <!-- 主工作区 -->
       <main class="flex-1 flex flex-col min-w-0 bg-slate-100 overflow-hidden">
-        <!-- 顶部通知栏 / 统计概览 -->
-        <header
-          class="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between flex-shrink-0 shadow-sm"
-        >
-          <div class="flex items-center space-x-3">
-            <h2 class="text-lg font-bold text-slate-800">{{ tabTitle }}</h2>
-            <span
-              v-if="activeTab === 'docs'"
-              class="text-xs px-2.5 py-1 bg-slate-100 text-slate-600 rounded-full font-medium border border-slate-200"
-            >
-              共 {{ docPagination.total }} 篇文档
-            </span>
-          </div>
-
-          <!-- 顶部快捷操作 -->
-          <div class="flex items-center space-x-4">
-            <div class="flex items-center space-x-6 text-sm">
-              <div class="flex items-center space-x-2 text-slate-600">
-                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                <span
-                  >已下载:
-                  <strong class="text-slate-900 font-semibold"
-                    >{{ stats.downloaded || 0 }}</strong
-                  ></span
-                >
-              </div>
-              <div class="flex items-center space-x-2 text-slate-600">
-                <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
-                <span
-                  >下载中:
-                  <strong class="text-slate-900 font-semibold"
-                    >{{ activeDownloadCount }}</strong
-                  ></span
-                >
-              </div>
-            </div>
-
-            <!-- 分类树后台同步指示器 -->
-            <div
-              v-if="categorySyncStatus.isSyncing && !categorySyncStatus.isInitial"
-              class="flex items-center space-x-2 px-3 py-1.5 bg-rose-50 border border-rose-200/80 rounded-full text-xs text-rose-700 font-medium animate-pulse shadow-xs"
-            >
-              <i
-                class="fa-solid fa-arrows-rotate animate-spin text-rose-500 text-xs"
-              ></i>
-              <span
-                >分类同步中: {{ categorySyncStatus.currentLineName || '正在连接'
-                }} ({{ categorySyncStatus.currentLine }}/{{
-                categorySyncStatus.totalLines || 60 }})</span
-              >
-            </div>
-
-            <button
-              @click="triggerScan"
-              :disabled="scanning"
-              class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md text-xs font-medium flex items-center transition border border-slate-300"
-            >
-              <i
-                class="fa-solid fa-magnifying-glass mr-1.5"
-                :class="scanning ? 'animate-spin text-blue-600' : ''"
-              ></i>
-              {{ scanning ? '正在扫描本地...' : '扫描本地目录' }}
-            </button>
-          </div>
-        </header>
-
         <!-- 内容区 -->
         <div class="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-6">
           <!-- =================== TAB 1: 文档中心 =================== -->
@@ -477,29 +411,42 @@
               >
                 <div class="flex items-center space-x-3">
                   <label
-                    class="flex items-center space-x-2 text-xs font-medium text-slate-600 cursor-pointer"
+                    class="flex items-center space-x-2 text-xs font-medium text-slate-700 cursor-pointer select-none"
                   >
                     <input
                       type="checkbox"
                       :checked="isAllSelected"
                       @change="toggleSelectAll"
-                      class="rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                      class="rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
                     />
-                    <span
-                      >全选本页 ({{ selectedNIDs.length }} / {{ docList.length
-                      }})</span
-                    >
+                    <span v-if="isAllSelected" class="font-semibold text-red-600">已全选筛选出的全部 {{ selectedNIDs.length }} 篇文档</span>
+                    <span v-else-if="selectedNIDs.length > 0">已选 {{ selectedNIDs.length }} / 共 {{ docPagination.total }} 篇 (点击全选所有)</span>
+                    <span v-else>全选所有筛选文档 (共 {{ docPagination.total }} 篇)</span>
                   </label>
+                  <button
+                    v-if="selectedNIDs.length > 0 && !isAllSelected"
+                    @click="toggleSelectAll"
+                    class="text-[11px] text-blue-600 hover:underline cursor-pointer font-medium"
+                  >
+                    [全选所有 {{ docPagination.total }} 篇]
+                  </button>
+                  <button
+                    v-if="selectedNIDs.length > 0"
+                    @click="selectedNIDs = []"
+                    class="text-[11px] text-slate-400 hover:text-red-500 underline ml-1 cursor-pointer"
+                  >
+                    清空选择
+                  </button>
                 </div>
 
                 <div class="flex items-center space-x-3">
                   <button
                     @click="batchDownloadSelected"
                     :disabled="selectedNIDs.length === 0"
-                    class="px-4 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:hover:bg-red-600 text-white rounded-lg text-xs font-medium flex items-center shadow-sm transition"
+                    class="px-4 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:hover:bg-red-600 text-white rounded-lg text-xs font-medium flex items-center shadow-sm transition cursor-pointer"
                   >
                     <i class="fa-solid fa-cloud-arrow-down mr-1.5"></i>
-                    批量下载选中项 ({{ selectedNIDs.length }})
+                    批量添加下载 ({{ selectedNIDs.length }})
                   </button>
                 </div>
               </div>
@@ -811,10 +758,54 @@
             <div
               class="bg-white rounded-xl shadow-sm border border-slate-200 p-5"
             >
-              <div class="flex items-center justify-between mb-4">
-                <h3 class="text-base font-bold text-slate-800">
-                  下载任务队列 ({{ downloadTasks.length }})
-                </h3>
+              <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+                <div class="flex items-center space-x-2 flex-wrap gap-2">
+                  <h3 class="text-base font-bold text-slate-800 mr-1">
+                    下载任务队列
+                  </h3>
+
+                  <!-- 状态过滤标签栏 -->
+                  <div class="flex items-center bg-slate-100 p-1 rounded-lg text-xs space-x-1">
+                    <button
+                      @click="downloadTabFilter = 'ALL'"
+                      :class="downloadTabFilter === 'ALL' ? 'bg-white text-slate-800 font-semibold shadow-xs' : 'text-slate-500 hover:text-slate-700'"
+                      class="px-2.5 py-1 rounded-md transition cursor-pointer"
+                    >
+                      全部 ({{ downloadStatsCounts.all }})
+                    </button>
+                    <button
+                      @click="downloadTabFilter = 'DOWNLOADING'"
+                      :class="downloadTabFilter === 'DOWNLOADING' ? 'bg-white text-red-600 font-bold shadow-xs' : 'text-slate-500 hover:text-red-600'"
+                      class="px-2.5 py-1 rounded-md transition flex items-center cursor-pointer"
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-red-500 mr-1.5 animate-pulse" v-if="downloadStatsCounts.downloading > 0"></span>
+                      下载中 ({{ downloadStatsCounts.downloading }})
+                    </button>
+                    <button
+                      @click="downloadTabFilter = 'PENDING'"
+                      :class="downloadTabFilter === 'PENDING' ? 'bg-white text-amber-600 font-bold shadow-xs' : 'text-slate-500 hover:text-amber-600'"
+                      class="px-2.5 py-1 rounded-md transition cursor-pointer"
+                    >
+                      排队中 ({{ downloadStatsCounts.pending }})
+                    </button>
+                    <button
+                      @click="downloadTabFilter = 'COMPLETED'"
+                      :class="downloadTabFilter === 'COMPLETED' ? 'bg-white text-emerald-600 font-bold shadow-xs' : 'text-slate-500 hover:text-emerald-600'"
+                      class="px-2.5 py-1 rounded-md transition cursor-pointer"
+                    >
+                      已完成 ({{ downloadStatsCounts.completed }})
+                    </button>
+                    <button
+                      v-if="downloadStatsCounts.failed > 0"
+                      @click="downloadTabFilter = 'FAILED'"
+                      :class="downloadTabFilter === 'FAILED' ? 'bg-white text-rose-600 font-bold shadow-xs' : 'text-slate-500 hover:text-rose-600'"
+                      class="px-2.5 py-1 rounded-md transition cursor-pointer"
+                    >
+                      异常/暂停 ({{ downloadStatsCounts.failed }})
+                    </button>
+                  </div>
+                </div>
+
                 <div class="flex items-center space-x-2 text-xs">
                   <span class="text-slate-500">下载保存目录:</span>
                   <code
@@ -825,19 +816,19 @@
               </div>
 
               <div
-                v-if="downloadTasks.length === 0"
+                v-if="sortedAndFilteredDownloadTasks.length === 0"
                 class="py-16 text-center text-slate-400"
               >
                 <i class="fa-solid fa-inbox text-4xl mb-3 text-slate-300"></i>
-                <p class="text-sm">暂无下载任务</p>
+                <p class="text-sm font-medium text-slate-600">当前筛选下暂无任务</p>
                 <p class="text-xs text-slate-400 mt-1">
-                  可在“文档中心”勾选并批量添加下载
+                  {{ downloadTabFilter !== 'ALL' ? '可切换上方标签或在“文档中心”添加下载' : '可在“文档中心”勾选并批量添加下载' }}
                 </p>
               </div>
 
               <div v-else class="space-y-3">
                 <div
-                  v-for="task in downloadTasks"
+                  v-for="task in sortedAndFilteredDownloadTasks"
                   :key="task.id"
                   class="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white transition shadow-sm space-y-3"
                 >
@@ -885,7 +876,7 @@
                         v-if="task.status === 1"
                         @click="pauseTask(task.id)"
                         title="暂停"
-                        class="p-1.5 text-slate-500 hover:text-amber-600 rounded"
+                        class="p-1.5 text-slate-500 hover:text-amber-600 rounded cursor-pointer"
                       >
                         <i class="fa-solid fa-pause"></i>
                       </button>
@@ -893,7 +884,7 @@
                         v-if="task.status === 4 || task.status === 3"
                         @click="resumeTask(task.id)"
                         title="继续/重试"
-                        class="p-1.5 text-slate-500 hover:text-emerald-600 rounded"
+                        class="p-1.5 text-slate-500 hover:text-emerald-600 rounded cursor-pointer"
                       >
                         <i class="fa-solid fa-play"></i>
                       </button>
@@ -901,14 +892,14 @@
                         v-if="task.status === 2"
                         @click="openLocalFolder(task.savePath)"
                         title="定位文件"
-                        class="p-1.5 text-slate-500 hover:text-blue-600 rounded"
+                        class="p-1.5 text-slate-500 hover:text-blue-600 rounded cursor-pointer"
                       >
                         <i class="fa-regular fa-folder-open"></i>
                       </button>
                       <button
                         @click="deleteTask(task.id)"
                         title="移除任务"
-                        class="p-1.5 text-slate-400 hover:text-red-600 rounded"
+                        class="p-1.5 text-slate-400 hover:text-red-600 rounded cursor-pointer"
                       >
                         <i class="fa-solid fa-trash-can"></i>
                       </button>
@@ -923,28 +914,31 @@
                       <div
                         class="h-2 rounded-full transition-all duration-300"
                         :class="task.status === 2 ? 'bg-emerald-500' : task.status === 3 ? 'bg-red-500' : 'bg-red-600'"
-                        :style="{ width: (task.progress || 0) + '%' }"
+                        :style="{ width: (task.status === 2 ? 100 : (task.progress || 0)) + '%' }"
                       ></div>
                     </div>
                     <div
                       class="flex items-center justify-between text-xs text-slate-500 font-mono"
                     >
                       <div>
-                        <span>{{ (task.progress || 0).toFixed(1) }}%</span>
+                        <span v-if="task.status === 2" class="text-emerald-600 font-bold">100.0%</span>
+                        <span v-else>{{ (task.progress || 0).toFixed(1) }}%</span>
                         <span v-if="task.totalBytes > 0" class="ml-2">
-                          ({{ formatBytes(task.downloadedBytes) }} / {{
+                          ({{ formatBytes(task.status === 2 ? task.totalBytes : task.downloadedBytes) }} / {{
                           formatBytes(task.totalBytes) }})
                         </span>
                       </div>
                       <div
                         v-if="task.status === 1"
-                        class="text-red-600 font-semibold"
+                        class="text-red-600 font-semibold flex items-center"
                       >
-                        <i class="fa-solid fa-bolt mr-1"></i>{{ task.speedStr ||
-                        '0 KB/s' }}
+                        <i class="fa-solid fa-bolt mr-1 animate-pulse"></i>{{ task.speedStr || '0 KB/s' }}
                       </div>
-                      <div v-else-if="task.status === 3" class="text-red-500">
-                        {{ task.errorMsg || '下载失败' }}
+                      <div v-else-if="task.status === 2" class="text-emerald-600 flex items-center font-sans font-medium">
+                        <i class="fa-solid fa-circle-check mr-1 text-[11px]"></i>已完成
+                      </div>
+                      <div v-else-if="task.status === 3" class="text-rose-500 font-sans flex items-center bg-rose-50 px-2 py-0.5 rounded border border-rose-200/60 max-w-md truncate" :title="task.errorMsg">
+                        <i class="fa-solid fa-circle-exclamation mr-1 text-[11px] flex-shrink-0"></i>{{ task.errorMsg || '下载失败' }}
                       </div>
                     </div>
                   </div>
@@ -1966,7 +1960,12 @@
           const crawlerSeriesList = computed(() => {
             const set = new Set();
             crawlerProducts.value.forEach((p) => {
-              if (p.naviGroup) set.add(p.naviGroup);
+              if (p.naviGroup) {
+                p.naviGroup.split(",").forEach((g) => {
+                  const trimmed = g.trim();
+                  if (trimmed) set.add(trimmed);
+                });
+              }
             });
             return Array.from(set);
           });
@@ -1974,9 +1973,11 @@
             if (!crawlerScope.value.series) {
               return crawlerProducts.value;
             }
-            return crawlerProducts.value.filter(
-              (p) => p.naviGroup === crawlerScope.value.series,
-            );
+            return crawlerProducts.value.filter((p) => {
+              if (!p.naviGroup) return false;
+              const groups = p.naviGroup.split(",").map((g) => g.trim());
+              return groups.includes(crawlerScope.value.series);
+            });
           });
           const crawlerLogs = ref([]);
           const crawlerProgress = ref({ current: 0, total: 0, item: "" });
@@ -2035,7 +2036,12 @@
           const filterSeriesList = computed(() => {
             const set = new Set();
             products.value.forEach((p) => {
-              if (p.naviGroup) set.add(p.naviGroup);
+              if (p.naviGroup) {
+                p.naviGroup.split(",").forEach((g) => {
+                  const trimmed = g.trim();
+                  if (trimmed) set.add(trimmed);
+                });
+              }
             });
             return Array.from(set);
           });
@@ -2043,9 +2049,11 @@
             if (!filters.value.series) {
               return products.value;
             }
-            return products.value.filter(
-              (p) => p.naviGroup === filters.value.series,
-            );
+            return products.value.filter((p) => {
+              if (!p.naviGroup) return false;
+              const groups = p.naviGroup.split(",").map((g) => g.trim());
+              return groups.includes(filters.value.series);
+            });
           });
 
           const availableDocCategories = ref([
@@ -2081,6 +2089,52 @@
 
           // 下载任务与配置
           const downloadTasks = ref([]);
+          const downloadTabFilter = ref("ALL"); // ALL, DOWNLOADING, PENDING, COMPLETED, FAILED
+
+          const downloadStatsCounts = computed(() => {
+            const counts = { all: 0, downloading: 0, pending: 0, completed: 0, failed: 0 };
+            downloadTasks.value.forEach((t) => {
+              counts.all++;
+              if (t.status === 1) counts.downloading++;
+              else if (t.status === 0) counts.pending++;
+              else if (t.status === 2) counts.completed++;
+              else if (t.status === 3 || t.status === 4) counts.failed++;
+            });
+            return counts;
+          });
+
+          const sortedAndFilteredDownloadTasks = computed(() => {
+            let list = [...downloadTasks.value];
+            if (downloadTabFilter.value === "DOWNLOADING") {
+              list = list.filter((t) => t.status === 1);
+            } else if (downloadTabFilter.value === "PENDING") {
+              list = list.filter((t) => t.status === 0);
+            } else if (downloadTabFilter.value === "COMPLETED") {
+              list = list.filter((t) => t.status === 2);
+            } else if (downloadTabFilter.value === "FAILED") {
+              list = list.filter((t) => t.status === 3 || t.status === 4);
+            }
+
+            const statusWeight = (s) => {
+              if (s === 1) return 1; // 下载中置顶
+              if (s === 0) return 2; // 排队中第二
+              if (s === 4) return 3; // 暂停第三
+              if (s === 3) return 4; // 失败第四
+              if (s === 2) return 5; // 已完成排在最后
+              return 6;
+            };
+
+            return list.sort((a, b) => {
+              const wa = statusWeight(a.status);
+              const wb = statusWeight(b.status);
+              if (wa !== wb) return wa - wb;
+              return (
+                (b.updatedAt || "").localeCompare(a.updatedAt || "") ||
+                (b.createdAt || "").localeCompare(a.createdAt || "")
+              );
+            });
+          });
+
           const config = ref({
             downloadDir: "",
             maxConcurrent: 3,
@@ -2128,8 +2182,8 @@
 
           const isAllSelected = computed(() => {
             return (
-              docList.value.length > 0 &&
-              docList.value.every((d) => selectedNIDs.value.includes(d.nid))
+              docPagination.value.total > 0 &&
+              selectedNIDs.value.length >= docPagination.value.total
             );
           });
 
@@ -2335,6 +2389,7 @@
             };
             currentProductLines.value = [];
             products.value = [];
+            selectedNIDs.value = [];
             docPagination.value.page = 1;
             fetchDocCategories();
             loadDocuments();
@@ -2405,11 +2460,41 @@
             loadDocuments();
           };
 
-          const toggleSelectAll = () => {
+          const toggleSelectAll = async () => {
             if (isAllSelected.value) {
               selectedNIDs.value = [];
             } else {
-              selectedNIDs.value = docList.value.map((d) => d.nid);
+              try {
+                const params = new URLSearchParams({
+                  categoryId: filters.value.categoryId,
+                  productLineId: filters.value.productLineId,
+                  series: filters.value.series,
+                  productId: filters.value.productId,
+                  docType: filters.value.docType,
+                  keyword: filters.value.keyword,
+                  isRegex: filters.value.isRegex ? "true" : "false",
+                });
+                if (
+                  filters.value.docCategory &&
+                  filters.value.docCategory !== "ALL"
+                ) {
+                  params.append("docCategory", filters.value.docCategory);
+                }
+                if (filters.value.isDownloaded !== "") {
+                  params.append("isDownloaded", filters.value.isDownloaded);
+                }
+                const res = await fetch(`/api/documents/nids?${params}`).then((r) =>
+                  r.json(),
+                );
+                if (res.code === 0 && res.data) {
+                  selectedNIDs.value = res.data;
+                  showToast(`已全选当前筛选出的全部 ${res.data.length} 篇文档`);
+                } else {
+                  selectedNIDs.value = docList.value.map((d) => d.nid);
+                }
+              } catch (e) {
+                selectedNIDs.value = docList.value.map((d) => d.nid);
+              }
             }
           };
 
@@ -2719,12 +2804,23 @@
                     (t) => t.id === event.taskId,
                   );
                   if (idx !== -1) {
-                    downloadTasks.value[idx].progress = event.progress;
-                    downloadTasks.value[idx].speedStr = event.speedStr;
-                    downloadTasks.value[idx].status = event.status;
-                    downloadTasks.value[idx].downloadedBytes =
-                      event.downloadedBytes;
-                    downloadTasks.value[idx].totalBytes = event.totalBytes;
+                    if (event.status === 2) {
+                      downloadTasks.value[idx].progress = 100.0;
+                      downloadTasks.value[idx].speedStr = "";
+                      downloadTasks.value[idx].status = 2;
+                      downloadTasks.value[idx].errorMsg = "";
+                      downloadTasks.value[idx].downloadedBytes =
+                        event.totalBytes || event.downloadedBytes;
+                      downloadTasks.value[idx].totalBytes = event.totalBytes;
+                    } else {
+                      downloadTasks.value[idx].progress = event.progress;
+                      downloadTasks.value[idx].speedStr = event.speedStr;
+                      downloadTasks.value[idx].status = event.status;
+                      downloadTasks.value[idx].errorMsg = event.errorMsg;
+                      downloadTasks.value[idx].downloadedBytes =
+                        event.downloadedBytes;
+                      downloadTasks.value[idx].totalBytes = event.totalBytes;
+                    }
                   } else {
                     loadTasks();
                   }
@@ -2961,6 +3057,12 @@
             await checkCrawlStatus();
             setInterval(checkCrawlStatus, 4000);
             setInterval(checkCategorySyncStatus, 3000);
+            // 活跃下载静默兜底轮询，确保进度与状态 100% 精确同步
+            setInterval(() => {
+              if (activeDownloadCount.value > 0 || activeTab.value === "downloads") {
+                loadTasks();
+              }
+            }, 2000);
             initWebSocket();
           });
 
@@ -2997,6 +3099,9 @@
             searchPlaceholder,
             docPagination,
             downloadTasks,
+            downloadTabFilter,
+            downloadStatsCounts,
+            sortedAndFilteredDownloadTasks,
             activeDownloadCount,
             isAllSelected,
             config,
