@@ -84,8 +84,9 @@ type Document struct {
 	PublishDate     string    `gorm:"column:publish_date;index" json:"publishDate"`
 	PublishTime     string    `gorm:"column:publish_time" json:"publishTime"`
 	LastUpdateTime  string    `gorm:"column:last_update_time" json:"lastUpdateTime"`
-	IsNewVersion    bool      `gorm:"column:is_new_version;index" json:"isNewVersion"`
-	IsDownloaded    int       `gorm:"column:is_downloaded;default:0;index" json:"isDownloaded"` // 0: 未下载, 1: 已下载
+	IsNewVersion          bool      `gorm:"column:is_new_version;index" json:"isNewVersion"`
+	HasLocalOlderVersion  bool      `gorm:"-" json:"hasLocalOlderVersion"` // 本地已存在该手册的旧版且当前这篇为新版 (仅此时前端展示新版本标签)
+	IsDownloaded          int       `gorm:"column:is_downloaded;default:0;index" json:"isDownloaded"` // 0: 未下载, 1: 已下载
 	LocalPath       string    `gorm:"column:local_path" json:"localPath"`
 	CrawlTime       time.Time `gorm:"column:crawl_time" json:"crawlTime"`
 	CreatedAt       time.Time `json:"createdAt"`

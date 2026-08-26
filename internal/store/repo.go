@@ -1,6 +1,7 @@
 package store
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -10,6 +11,20 @@ import (
 
 	"hwdocsdown/internal/logger"
 )
+
+var (
+	reRepoDocTypeClean = regexp.MustCompile(`(?i)\s*[\(（](?:hdx|chm|pdf|zip|多媒体)[\)）]`)
+	reRepoCleanMedia   = regexp.MustCompile(`(?i)\s*[\(（]多媒体[\)）]`)
+	reRepoVersionTag   = regexp.MustCompile(`(?i)\s*V\d{3}R\d{3}(?:[,\s]*[CB]\d+)*(?:SP[HC]\d+)?`)
+)
+
+func calcBaseGroupKey(name, docType string) string {
+	clean := reRepoDocTypeClean.ReplaceAllString(name, "")
+	clean = reRepoCleanMedia.ReplaceAllString(clean, "")
+	clean = reRepoVersionTag.ReplaceAllString(clean, "")
+	clean = strings.Join(strings.Fields(clean), " ")
+	return strings.TrimSpace(clean) + "::" + docType
+}
 
 type Repository struct {
 	db *gorm.DB
@@ -256,6 +271,48 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	err := query.Order("is_downloaded DESC, is_new_version DESC, publish_date DESC, name ASC").Offset(offset).Limit(q.PageSize).Find(&docs).Error
 	if err != nil {
 		return nil, err
+	}
+
+	// 针对当前页文档，计算是否有同产品同系列且本地已下载的历史旧版本
+	if len(docs) > 0 {
+		var productIDs []string
+		pidSet := make(map[string]bool)
+		for _, d := range docs {
+			if d.IsNewVersion && d.ProductID != "" && !pidSet[d.ProductID] {
+				pidSet[d.ProductID] = true
+				productIDs = append(productIDs, d.ProductID)
+			}
+		}
+
+		if len(productIDs) > 0 {
+			var downloadedDocs []Document
+			r.db.Model(&Document{}).
+				Where("product_id IN ? AND is_downloaded = 1", productIDs).
+				Select("nid, product_id, name, doc_type, publish_date, publish_time").
+				Find(&downloadedDocs)
+
+			// 分组存储已下载旧版本的最高发布时间与集合
+			downloadedGroupMap := make(map[string][]Document)
+			for _, dd := range downloadedDocs {
+				gKey := dd.ProductID + "::" + calcBaseGroupKey(dd.Name, dd.DocType)
+				downloadedGroupMap[gKey] = append(downloadedGroupMap[gKey], dd)
+			}
+
+			for i := range docs {
+				if docs[i].IsNewVersion {
+					gKey := docs[i].ProductID + "::" + calcBaseGroupKey(docs[i].Name, docs[i].DocType)
+					if dlist, ok := downloadedGroupMap[gKey]; ok {
+						for _, dl := range dlist {
+							// 存在已下载记录且 NID 不同（或已下载记录的发布时间早于当前文档），表明本地存在旧版
+							if dl.NID != docs[i].NID || (dl.PublishDate != "" && dl.PublishDate < docs[i].PublishDate) {
+								docs[i].HasLocalOlderVersion = true
+								break
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 
 	return &DocFilterResult{

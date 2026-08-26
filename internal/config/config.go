@@ -16,7 +16,7 @@ type Config struct {
 	DownloadDir        string `json:"downloadDir"`
 	MaxConcurrent      int    `json:"maxConcurrent"`
 	FileThreads        int    `json:"fileThreads"`    // 单文件多线程数 1-32，默认 1
-	CrawlerThreads     int    `json:"crawlerThreads"` // 爬虫并发线程数 1-32，默认 1
+	CrawlerThreads     int    `json:"crawlerThreads"` // 爬虫并发线程数 1-32，默认 8
 	RequestDelayMs     int    `json:"requestDelayMs"`
 	CustomCookie       string `json:"customCookie"`
 	AutoSyncCategories bool   `json:"autoSyncCategories"`
@@ -57,7 +57,7 @@ func InitConfig(repo *store.Repository) Config {
 		DownloadDir:        defaultDownloadDir, // 锁死为固定默认目录，禁止任意修改
 		MaxConcurrent:      getIntSetting(repo, "max_concurrent", 3),
 		FileThreads:        getIntSetting(repo, "file_threads", 1),
-		CrawlerThreads:     getIntSetting(repo, "crawler_threads", 1),
+		CrawlerThreads:     getIntSetting(repo, "crawler_threads", 8),
 		RequestDelayMs:     getIntSetting(repo, "request_delay_ms", 500),
 		CustomCookie:       repo.GetSetting("custom_cookie", ""),
 		AutoSyncCategories: getBoolSetting(repo, "auto_sync_categories", true),

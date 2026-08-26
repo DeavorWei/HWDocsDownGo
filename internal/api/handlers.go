@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -67,14 +68,24 @@ func NewServerHandler(
 	// 监听爬虫结束事件并广播
 	crawlerEngine.SetOnFinished(func(success bool, msg string) {
 		logger.Info("爬虫引擎任务完成", zap.Bool("success", success), zap.String("msg", msg))
+		isBlocked := strings.Contains(msg, "安全拦截") || strings.Contains(msg, "WSF") || strings.Contains(msg, "熔断")
 		h.hub.Broadcast(map[string]interface{}{
 			"type": "CRAWLER_FINISHED",
 			"data": gin.H{
-				"isBusy":  false,
-				"success": success,
-				"msg":     msg,
+				"isBusy":    false,
+				"success":   success,
+				"msg":       msg,
+				"isBlocked": isBlocked,
 			},
 		})
+		if isBlocked {
+			h.hub.Broadcast(map[string]interface{}{
+				"type": "CRAWLER_WSF_BLOCKED",
+				"data": gin.H{
+					"reason": msg,
+				},
+			})
+		}
 	})
 
 	// 订阅实时日志并推送到 WebSocket

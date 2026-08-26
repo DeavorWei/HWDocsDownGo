@@ -161,6 +161,9 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 						zap.String("product", prod.Name),
 					)
 					send("   %s 🚨【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。", workerTag)
+					if onProgress != nil {
+						onProgress(int(atomic.LoadInt64(&completedCount)), task.total, fmt.Sprintf("🚨 触发安全拦截: 型号 %s (%s)", prod.Name, workerTag))
+					}
 					return
 				}
 

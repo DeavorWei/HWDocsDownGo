@@ -491,46 +491,46 @@
                     class="bg-slate-50 text-xs text-slate-400 uppercase border-b border-slate-200"
                   >
                     <tr>
-                      <th scope="col" class="p-4 w-10"></th>
+                      <th scope="col" class="p-4 w-12 text-center"></th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700"
+                        class="px-4 py-3 font-semibold text-slate-700 min-w-[320px]"
                       >
                         文档名称
                       </th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700"
+                        class="px-4 py-3 font-semibold text-slate-700 w-24 min-w-[90px] whitespace-nowrap"
                       >
                         格式
                       </th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700"
+                        class="px-4 py-3 font-semibold text-slate-700 w-36 min-w-[130px] whitespace-nowrap"
                       >
                         更新日期
                       </th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700"
+                        class="px-4 py-3 font-semibold text-slate-700 w-48 min-w-[160px] whitespace-nowrap"
                       >
                         所属型号
                       </th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700"
+                        class="px-4 py-3 font-semibold text-slate-700 w-28 min-w-[100px] whitespace-nowrap"
                       >
                         文件大小
                       </th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700"
+                        class="px-4 py-3 font-semibold text-slate-700 w-36 min-w-[135px] whitespace-nowrap"
                       >
                         下载状态
                       </th>
                       <th
                         scope="col"
-                        class="px-4 py-3 font-semibold text-slate-700 text-right"
+                        class="px-4 py-3 font-semibold text-slate-700 text-right w-40 min-w-[145px] whitespace-nowrap"
                       >
                         操作
                       </th>
@@ -575,53 +575,54 @@
                       class="transition-colors"
                     >
                       <!-- 复选框 -->
-                      <td class="p-4">
+                      <td class="p-4 w-12 text-center">
                         <input
                           type="checkbox"
                           :value="doc.nid"
                           v-model="selectedNIDs"
-                          class="rounded text-red-600 focus:ring-red-500 w-4 h-4"
+                          class="rounded text-red-600 focus:ring-red-500 w-4 h-4 cursor-pointer"
                         />
                       </td>
 
                       <!-- 文档名称与 NID 以及新版本标签 -->
-                      <td class="px-4 py-3.5">
-                        <div
-                          class="font-medium text-slate-900 flex items-center flex-wrap gap-1.5"
-                        >
+                      <td class="px-4 py-3.5 min-w-[320px]">
+                        <div class="flex items-start gap-2 font-medium text-slate-900 leading-snug">
                           <i
                             :class="getDocIcon(doc.docType)"
-                            class="mr-1 text-base flex-shrink-0"
+                            class="mt-0.5 text-base flex-shrink-0"
                           ></i>
-                          <a
-                            :href="getDocUrl(doc)"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="hover:text-red-600 hover:underline transition-colors inline-flex items-center group cursor-pointer"
-                            :title="'点击在浏览器中打开官方文档页面: ' + doc.name"
-                          >
-                            <span>{{ doc.name }}</span>
-                            <i
-                              class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            ></i>
-                          </a>
-                          <span
-                            v-if="doc.isNewVersion"
-                            class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200/80 shadow-sm animate-pulse"
-                          >
-                            <i
-                              class="fa-solid fa-fire mr-1 text-rose-500 text-[10px]"
-                            ></i
-                            >新版本
-                          </span>
+                          <div class="flex-1 min-w-0">
+                            <a
+                              :href="getDocUrl(doc)"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="hover:text-red-600 hover:underline transition-colors inline text-slate-900 group cursor-pointer break-words"
+                              :title="'点击在浏览器中打开官方文档页面: ' + doc.name"
+                            >
+                              <span>{{ doc.name }}</span>
+                              <i
+                                class="fa-solid fa-arrow-up-right-from-square text-[10px] ml-1 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity inline-block"
+                              ></i>
+                            </a>
+                            <span
+                              v-if="doc.hasLocalOlderVersion"
+                              class="inline-flex items-center ml-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-700 border border-rose-200/80 shadow-sm align-middle whitespace-nowrap animate-pulse"
+                              title="本地已下载同系列旧版本，检测到线上已发布更新版本"
+                            >
+                              <i
+                                class="fa-solid fa-fire mr-1 text-rose-500 text-[10px]"
+                              ></i
+                              >新版本
+                            </span>
+                          </div>
                         </div>
                         <div
-                          class="text-xs text-slate-400 mt-1 flex items-center flex-wrap gap-2"
+                          class="text-xs text-slate-400 mt-1.5 flex items-center flex-wrap gap-2 pl-6"
                         >
                           <span
                             >编号:
                             <code
-                              class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]"
+                              class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px] font-mono"
                               >{{ doc.nid }}</code
                             ></span
                           >
@@ -640,7 +641,7 @@
                       </td>
 
                       <!-- 格式徽章 -->
-                      <td class="px-4 py-3.5">
+                      <td class="px-4 py-3.5 whitespace-nowrap">
                         <span
                           :class="getDocTypeBadgeClass(doc.docType)"
                           class="px-2.5 py-0.5 rounded-full text-xs font-semibold tracking-wide"
@@ -650,7 +651,7 @@
                       </td>
 
                       <!-- 更新日期 -->
-                      <td class="px-4 py-3.5 text-xs text-slate-600">
+                      <td class="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
                         <div
                           class="flex items-center font-mono text-slate-700"
                           :title="'完整发布时间: ' + (doc.publishTime || doc.lastUpdateTime || '-')"
@@ -663,20 +664,20 @@
                       </td>
 
                       <!-- 所属型号 -->
-                      <td class="px-4 py-3.5 text-xs text-slate-600">
-                        <div>{{ doc.productName || '通用' }}</div>
-                        <div class="text-slate-400">
+                      <td class="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
+                        <div class="font-medium text-slate-800">{{ doc.productName || '通用' }}</div>
+                        <div class="text-slate-400 text-[11px]">
                           {{ doc.productLineName }}
                         </div>
                       </td>
 
                       <!-- 文件大小 -->
-                      <td class="px-4 py-3.5 text-xs font-mono text-slate-600">
+                      <td class="px-4 py-3.5 text-xs font-mono text-slate-600 whitespace-nowrap">
                         {{ doc.fileSizeStr || '-' }}
                       </td>
 
                       <!-- 下载状态（已下载徽章高亮） -->
-                      <td class="px-4 py-3.5">
+                      <td class="px-4 py-3.5 whitespace-nowrap">
                         <div
                           v-if="doc.isDownloaded === 1"
                           class="flex items-center space-x-1.5"
@@ -709,12 +710,12 @@
                       </td>
 
                       <!-- 操作 -->
-                      <td class="px-4 py-3.5 text-right space-x-2">
+                      <td class="px-4 py-3.5 text-right space-x-2 whitespace-nowrap">
                         <button
                           v-if="doc.isDownloaded === 1"
                           @click="openLocalFolder(doc.localPath)"
                           title="在文件夹中打开"
-                          class="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition"
+                          class="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition cursor-pointer"
                         >
                           <i class="fa-regular fa-folder-open"></i>
                         </button>
@@ -722,7 +723,7 @@
                         <button
                           @click="startDownloadSingle(doc)"
                           :class="doc.isDownloaded === 1 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-red-600 text-white hover:bg-red-700 shadow-sm shadow-red-500/20'"
-                          class="px-3 py-1 rounded-md text-xs font-medium inline-flex items-center transition"
+                          class="px-3 py-1 rounded-md text-xs font-medium inline-flex items-center transition cursor-pointer"
                         >
                           <i class="fa-solid fa-download mr-1"></i>
                           {{ doc.isDownloaded === 1 ? '重新下载' : '下载' }}
@@ -747,20 +748,39 @@
                   <button
                     @click="changePage(docPagination.page - 1)"
                     :disabled="docPagination.page <= 1"
-                    class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40"
+                    class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
                   >
                     上一页
                   </button>
                   <span class="font-medium text-slate-700"
-                    >第 {{ docPagination.page }} 页</span
+                    >第 {{ docPagination.page }} / {{ totalPages }} 页</span
                   >
                   <button
                     @click="changePage(docPagination.page + 1)"
-                    :disabled="docPagination.page * docPagination.pageSize >= docPagination.total"
-                    class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40"
+                    :disabled="docPagination.page >= totalPages"
+                    class="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
                   >
                     下一页
                   </button>
+                  <div class="flex items-center space-x-1 pl-2 border-l border-slate-300">
+                    <span>前往</span>
+                    <input
+                      type="number"
+                      min="1"
+                      :max="totalPages"
+                      v-model.number="jumpPageInput"
+                      @keyup.enter="jumpToPage"
+                      placeholder="页码"
+                      class="w-14 px-1.5 py-1 text-center text-xs border border-slate-300 rounded focus:ring-1 focus:ring-red-500 focus:outline-none bg-white font-mono"
+                    />
+                    <span>页</span>
+                    <button
+                      @click="jumpToPage"
+                      class="px-2 py-1 bg-white border border-slate-300 rounded hover:bg-slate-100 text-slate-700 font-medium transition cursor-pointer shadow-2xs"
+                    >
+                      跳转
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1169,25 +1189,44 @@
                 </div>
               </div>
 
-              <!-- 爬虫实时进度条 -->
+              <!-- 爬虫实时进度条与熔断提示 -->
               <div
-                v-if="crawlerProgress.total > 0"
-                class="space-y-1.5 bg-blue-50/70 p-4 rounded-xl border border-blue-200"
+                v-if="crawlerProgress.total > 0 || crawlerBlocked"
+                :class="crawlerBlocked ? 'bg-rose-50 border-rose-300' : 'bg-blue-50/70 border-blue-200'"
+                class="space-y-2 p-4 rounded-xl border transition-all"
               >
                 <div
-                  class="flex items-center justify-between text-xs text-blue-900 font-medium"
+                  class="flex items-center justify-between text-xs font-medium"
+                  :class="crawlerBlocked ? 'text-rose-900' : 'text-blue-900'"
                 >
-                  <span>{{ crawlerProgress.item }}</span>
-                  <span
-                    >{{ crawlerProgress.current }} / {{ crawlerProgress.total
-                    }}</span
-                  >
+                  <div class="flex items-center space-x-1.5 flex-1 mr-3 min-w-0">
+                    <i
+                      :class="crawlerBlocked ? 'fa-solid fa-shield-halved text-rose-600 text-sm animate-pulse' : 'fa-solid fa-spinner fa-spin text-blue-600'"
+                    ></i>
+                    <span class="truncate font-semibold">{{ crawlerBlocked ? (crawlerBlockedMsg || '🚨 安全网关拦截已熔断：请更新有效 Cookie') : crawlerProgress.item }}</span>
+                  </div>
+                  <div class="flex items-center space-x-2 flex-shrink-0">
+                    <button
+                      v-if="crawlerBlocked"
+                      @click="openCookieModal"
+                      class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-bold transition cursor-pointer shadow-xs flex items-center space-x-1"
+                    >
+                      <i class="fa-solid fa-key text-[10px]"></i>
+                      <span>录入 Cookie</span>
+                    </button>
+                    <span v-if="crawlerProgress.total > 0" class="font-mono font-semibold"
+                      >{{ crawlerProgress.current }} / {{ crawlerProgress.total }}</span
+                    >
+                  </div>
                 </div>
                 <div
-                  class="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden"
+                  v-if="crawlerProgress.total > 0"
+                  :class="crawlerBlocked ? 'bg-rose-200' : 'bg-blue-200'"
+                  class="w-full rounded-full h-2.5 overflow-hidden"
                 >
                   <div
-                    class="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                    :class="crawlerBlocked ? 'bg-rose-600' : 'bg-blue-600'"
+                    class="h-2.5 rounded-full transition-all duration-300"
                     :style="{ width: (crawlerProgress.current / crawlerProgress.total * 100) + '%' }"
                   ></div>
                 </div>
@@ -1401,7 +1440,7 @@
                       class="w-32 bg-white border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
                     />
                     <p class="text-xs text-slate-400">
-                      多线程爬取各产品型号与文档树（默认为 1 线程；设置 2-32
+                      多线程爬取各产品型号与文档树（默认推荐为 8 线程；设置 2-32
                       时日志将显示 [爬虫-1] ~ [爬虫-N] 工作标示）。
                     </p>
                   </div>
@@ -1724,6 +1763,78 @@
         </div>
       </div>
 
+      <!-- 华为网关 WSF 拦截 Cookie 录入弹窗 -->
+      <div
+        v-if="showCookieModal"
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs transition-opacity"
+      >
+        <div
+          class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-scale-in"
+        >
+          <div class="flex items-center space-x-3.5 mb-4">
+            <div
+              class="w-11 h-11 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0 border border-amber-200/80"
+            >
+              <i class="fa-solid fa-shield-halved text-xl text-amber-600"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-900">
+                触发华为安全网关校验 (WSF Check)
+              </h3>
+              <p class="text-xs text-slate-500 mt-0.5">
+                请在下方填入浏览器的有效 Cookie 以解除反爬拦截
+              </p>
+            </div>
+          </div>
+
+          <div
+            class="text-xs text-slate-600 bg-amber-50/70 p-3.5 rounded-xl border border-amber-200/80 mb-4 space-y-1.5 leading-relaxed"
+          >
+            <div class="font-semibold text-amber-900 flex items-center space-x-1">
+              <i class="fa-solid fa-circle-info text-amber-600"></i>
+              <span>Cookie 获取指引：</span>
+            </div>
+            <p>1. 使用 Chrome 或 Edge 打开并登录 <a href="https://support.huawei.com/enterprise/zh/" target="_blank" class="text-blue-600 underline font-medium">华为企业支持官网</a>；</p>
+            <p>2. 按 <kbd class="px-1 py-0.5 bg-white border border-slate-300 rounded font-mono text-[10px]">F12</kbd> 打开开发者工具，切换到 <strong>Network (网络)</strong> 标签；</p>
+            <p>3. 刷新页面或点击任意产品，在请求的 <strong>Request Headers</strong> 中找到并复制整段 <code>Cookie</code>；</p>
+            <p>4. 将复制的内容粘贴到下方文本框中，点击【保存并应用】即可继续爬取。</p>
+          </div>
+
+          <div class="space-y-2 mb-5">
+            <label class="block text-xs font-bold text-slate-700">
+              浏览器 Cookie 内容：
+            </label>
+            <textarea
+              v-model="tempCookieInput"
+              rows="4"
+              placeholder="请粘贴以 support_last_vist=enterprise; 或 idss_cid=... 开头的完整 Cookie 字符串"
+              class="w-full text-xs font-mono p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 focus:outline-none bg-slate-50/50 resize-y"
+            ></textarea>
+          </div>
+
+          <div class="flex items-center justify-end space-x-3">
+            <button
+              @click="showCookieModal = false"
+              :disabled="isSavingCookie"
+              class="px-4 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition border border-slate-300 cursor-pointer"
+            >
+              取消
+            </button>
+            <button
+              @click="saveCookieFromModal"
+              :disabled="isSavingCookie"
+              class="px-4 py-2 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition shadow-sm flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <i
+                class="fa-solid"
+                :class="isSavingCookie ? 'fa-spinner animate-spin' : 'fa-floppy-disk'"
+              ></i>
+              <span>{{ isSavingCookie ? '正在保存...' : '保存并应用 Cookie' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <!-- 系统已安全退出全屏遮罩 -->
       <div
         v-if="isSystemTerminated"
@@ -1778,10 +1889,15 @@
           const loadingDocs = ref(false);
           const lastScanResult = ref(null);
 
-          // 退出系统状态
+          // 退出系统与弹窗状态
           const showShutdownModal = ref(false);
           const isShuttingDown = ref(false);
           const isSystemTerminated = ref(false);
+
+          // 华为网关拦截与 Cookie 录入弹窗
+          const showCookieModal = ref(false);
+          const tempCookieInput = ref("");
+          const isSavingCookie = ref(false);
 
           // 爬虫控制与日志
           const crawlerScope = ref({
@@ -1809,6 +1925,8 @@
           });
           const crawlerLogs = ref([]);
           const crawlerProgress = ref({ current: 0, total: 0, item: "" });
+          const crawlerBlocked = ref(false);
+          const crawlerBlockedMsg = ref("");
           const logContainer = ref(null);
 
           // 分类树同步状态
@@ -1892,6 +2010,11 @@
           ]);
 
           const docPagination = ref({ page: 1, pageSize: 20, total: 0 });
+          const jumpPageInput = ref("");
+          const totalPages = computed(() => {
+            if (!docPagination.value.total || docPagination.value.total <= 0) return 1;
+            return Math.ceil(docPagination.value.total / docPagination.value.pageSize) || 1;
+          });
 
           // 下载任务与配置
           const downloadTasks = ref([]);
@@ -1899,7 +2022,7 @@
             downloadDir: "",
             maxConcurrent: 3,
             fileThreads: 1,
-            crawlerThreads: 1,
+            crawlerThreads: 8,
             requestDelayMs: 500,
             customCookie: "",
             autoSyncCategories: true,
@@ -1909,7 +2032,7 @@
             downloadDir: "",
             maxConcurrent: 3,
             fileThreads: 1,
-            crawlerThreads: 1,
+            crawlerThreads: 8,
             requestDelayMs: 500,
             customCookie: "",
             autoSyncCategories: true,
@@ -2179,7 +2302,18 @@
           };
 
           const changePage = (newPage) => {
+            if (newPage < 1) newPage = 1;
+            if (newPage > totalPages.value) newPage = totalPages.value;
             docPagination.value.page = newPage;
+            loadDocuments();
+          };
+
+          const jumpToPage = () => {
+            let p = parseInt(jumpPageInput.value);
+            if (isNaN(p) || p < 1) p = 1;
+            if (p > totalPages.value) p = totalPages.value;
+            docPagination.value.page = p;
+            jumpPageInput.value = "";
             loadDocuments();
           };
 
@@ -2285,6 +2419,8 @@
 
           // ---------------- 爬虫中心 ----------------
           const startFullCrawl = async () => {
+            crawlerBlocked.value = false;
+            crawlerBlockedMsg.value = "";
             try {
               const res = await fetch("/api/crawl/start", {
                 method: "POST",
@@ -2337,6 +2473,8 @@
 
           const startScopedCrawl = async () => {
             if (!canStartScopedCrawl.value) return;
+            crawlerBlocked.value = false;
+            crawlerBlockedMsg.value = "";
             try {
               const res = await fetch("/api/crawl/start", {
                 method: "POST",
@@ -2405,6 +2543,46 @@
             showToast("下载目录位置: " + path, "info");
           };
 
+          const openCookieModal = () => {
+            tempCookieInput.value = configForm.value.customCookie || config.value.customCookie || "";
+            showCookieModal.value = true;
+          };
+
+          const saveCookieFromModal = async () => {
+            isSavingCookie.value = true;
+            try {
+              const payload = {
+                downloadDir: configForm.value.downloadDir,
+                maxConcurrent: configForm.value.maxConcurrent,
+                fileThreads: configForm.value.fileThreads,
+                crawlerThreads: configForm.value.crawlerThreads || 8,
+                requestDelayMs: configForm.value.requestDelayMs,
+                customCookie: tempCookieInput.value,
+                autoSyncCategories: configForm.value.autoSyncCategories,
+                logLevel: configForm.value.logLevel,
+              };
+              const res = await fetch("/api/settings", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                configForm.value.customCookie = tempCookieInput.value;
+                config.value.customCookie = tempCookieInput.value;
+                showToast("Cookie 已成功保存并应用！");
+                showCookieModal.value = false;
+                crawlerBlocked.value = false;
+                crawlerBlockedMsg.value = "";
+              } else {
+                showToast(res.message, "error");
+              }
+            } catch (e) {
+              showToast("保存 Cookie 失败: " + e.message, "error");
+            } finally {
+              isSavingCookie.value = false;
+            }
+          };
+
           const fetchStats = async () => {
             try {
               const res = await fetch("/api/statistics").then((r) => r.json());
@@ -2470,9 +2648,25 @@
                   loadDocuments();
                 } else if (msg.type === "CRAWLER_PROGRESS" && msg.data) {
                   crawlerProgress.value = msg.data;
+                  if (msg.data.item && (msg.data.item.includes("安全拦截") || msg.data.item.includes("WSF"))) {
+                    crawlerBlocked.value = true;
+                    crawlerBlockedMsg.value = msg.data.item;
+                  }
+                } else if (msg.type === "CRAWLER_WSF_BLOCKED") {
+                  crawlerBlocked.value = true;
+                  crawlerBlockedMsg.value = (msg.data && msg.data.reason) ? msg.data.reason : "检测到华为网关 WSF 安全拦截，请填入有效 Cookie";
+                  openCookieModal();
                 } else if (msg.type === "CRAWLER_FINISHED") {
                   crawlerRunning.value = false;
-                  crawlerProgress.value = { current: 0, total: 0, item: "" };
+                  const isBlocked = msg.data && msg.data.isBlocked;
+                  if (isBlocked) {
+                    crawlerBlocked.value = true;
+                    crawlerBlockedMsg.value = (msg.data && msg.data.msg) ? msg.data.msg : "爬虫已熔断：华为安全网关拦截 (WSF Check Error)";
+                    openCookieModal();
+                  } else {
+                    crawlerBlocked.value = false;
+                    crawlerProgress.value = { current: 0, total: 0, item: "" };
+                  }
                   fetchStats();
                   fetchCategories();
                   loadDocuments();
@@ -2712,6 +2906,9 @@
             debounceSearch,
             resetFilters,
             changePage,
+            jumpPageInput,
+            totalPages,
+            jumpToPage,
             toggleSelectAll,
             startDownloadSingle,
             batchDownloadSelected,
@@ -2724,6 +2921,13 @@
             stopCrawler,
             saveSettings,
             openLocalFolder,
+            showCookieModal,
+            tempCookieInput,
+            isSavingCookie,
+            openCookieModal,
+            saveCookieFromModal,
+            crawlerBlocked,
+            crawlerBlockedMsg,
             showShutdownModal,
             isShuttingDown,
             isSystemTerminated,
