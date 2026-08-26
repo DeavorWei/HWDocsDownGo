@@ -271,9 +271,9 @@
             <div
               class="bg-white rounded-xl p-5 shadow-sm border border-slate-200 space-y-4"
             >
-              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                <!-- 1. 产品大类 -->
-                <div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+                <!-- 1. 产品大类 (1列) -->
+                <div class="col-span-1">
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
                     >1. 产品大类</label
                   >
@@ -293,8 +293,8 @@
                   </select>
                 </div>
 
-                <!-- 2. 二级产品线 -->
-                <div>
+                <!-- 2. 二级产品线 (1列) -->
+                <div class="col-span-1">
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
                     >2. 二级产品线</label
                   >
@@ -315,8 +315,8 @@
                   </select>
                 </div>
 
-                <!-- 3. 产品系列 -->
-                <div>
+                <!-- 3. 产品系列 (1列) -->
+                <div class="col-span-1">
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
                     >3. 产品系列</label
                   >
@@ -337,8 +337,8 @@
                   </select>
                 </div>
 
-                <!-- 4. 产品型号 -->
-                <div>
+                <!-- 4. 产品型号 (1列) -->
+                <div class="col-span-1">
                   <label class="block text-xs font-medium text-slate-500 mb-1.5"
                     >4. 产品型号</label
                   >
@@ -359,22 +359,42 @@
                   </select>
                 </div>
 
-                <!-- 5. 关键词搜索 -->
-                <div>
-                  <label class="block text-xs font-medium text-slate-500 mb-1.5"
-                    >5. 关键词搜索</label
-                  >
-                  <div class="relative">
+                <!-- 5. 关键词搜索 (占2列，支持多关键词AND与正则表达式搜索) -->
+                <div class="col-span-1 sm:col-span-2 lg:col-span-2">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <label class="block text-xs font-medium text-slate-500"
+                      >5. 关键词搜索</label
+                    >
+                    <span v-if="filters.isRegex" class="text-[11px] text-red-600 font-semibold flex items-center">
+                      <i class="fa-solid fa-code mr-1"></i>正则表达式模式
+                    </span>
+                    <span v-else class="text-[11px] text-slate-400">
+                      多词以空格分隔(AND)
+                    </span>
+                  </div>
+                  <div class="relative flex items-center">
+                    <i
+                      class="fa-solid fa-magnifying-glass absolute left-3 text-slate-400 text-xs pointer-events-none"
+                    ></i>
                     <input
                       type="text"
                       v-model="filters.keyword"
                       @input="debounceSearch"
-                      placeholder="输入文档名或型号搜索..."
-                      class="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                      @keyup="onSearchKeyUp"
+                      :placeholder="searchPlaceholder"
+                      class="w-full bg-slate-50 border border-slate-300 rounded-lg pl-9 pr-20 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 transition"
+                      :class="filters.isRegex ? 'border-red-300 bg-red-50/20' : ''"
                     />
-                    <i
-                      class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-xs"
-                    ></i>
+                    <button
+                      type="button"
+                      @click="toggleRegexMode"
+                      :class="filters.isRegex ? 'bg-red-600 text-white font-bold shadow-xs' : 'bg-slate-200 hover:bg-slate-300 text-slate-600'"
+                      class="absolute right-1.5 px-2 py-1 text-xs rounded-md transition duration-150 flex items-center space-x-1 cursor-pointer"
+                      :title="filters.isRegex ? '当前为正则表达式搜索模式，点击切换为普通多关键词模式' : '点击开启正则表达式搜索模式'"
+                    >
+                      <span class="font-mono text-[11px] font-bold">.*</span>
+                      <span class="text-[11px]">正则</span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -769,7 +789,7 @@
                       min="1"
                       :max="totalPages"
                       v-model.number="jumpPageInput"
-                      @keyup.enter="jumpToPage"
+                      @keyup="onJumpPageKeyUp"
                       placeholder="页码"
                       class="w-14 px-1.5 py-1 text-center text-xs border border-slate-300 rounded focus:ring-1 focus:ring-red-500 focus:outline-none bg-white font-mono"
                     />
@@ -1989,21 +2009,6 @@
           const categories = ref([]);
           const currentProductLines = ref([]);
           const products = ref([]);
-          const filterSeriesList = computed(() => {
-            const set = new Set();
-            products.value.forEach((p) => {
-              if (p.naviGroup) set.add(p.naviGroup);
-            });
-            return Array.from(set);
-          });
-          const filteredFilterProducts = computed(() => {
-            if (!filters.value.series) {
-              return products.value;
-            }
-            return products.value.filter(
-              (p) => p.naviGroup === filters.value.series,
-            );
-          });
           const docList = ref([]);
           const selectedNIDs = ref([]);
 
@@ -2018,6 +2023,29 @@
             docCategory: "ALL",
             isDownloaded: "",
             keyword: "",
+            isRegex: false,
+          });
+
+          const searchPlaceholder = computed(() => {
+            return filters.value.isRegex
+              ? "输入正则表达式（如 V(200|300)R\\d+）搜索..."
+              : "输入关键词（支持空格多词AND联合检索）...";
+          });
+
+          const filterSeriesList = computed(() => {
+            const set = new Set();
+            products.value.forEach((p) => {
+              if (p.naviGroup) set.add(p.naviGroup);
+            });
+            return Array.from(set);
+          });
+          const filteredFilterProducts = computed(() => {
+            if (!filters.value.series) {
+              return products.value;
+            }
+            return products.value.filter(
+              (p) => p.naviGroup === filters.value.series,
+            );
           });
 
           const availableDocCategories = ref([
@@ -2280,6 +2308,17 @@
             }, 300);
           };
 
+          const toggleRegexMode = () => {
+            filters.value.isRegex = !filters.value.isRegex;
+            docPagination.value.page = 1;
+            loadDocuments();
+            if (filters.value.isRegex) {
+              showToast("已开启正则表达式搜索模式", "info");
+            } else {
+              showToast("已切换为多关键词(AND)搜索模式", "info");
+            }
+          };
+
           const resetFilters = () => {
             filters.value = {
               categoryId: "",
@@ -2292,6 +2331,7 @@
               docCategory: "ALL",
               isDownloaded: "",
               keyword: "",
+              isRegex: false,
             };
             currentProductLines.value = [];
             products.value = [];
@@ -2312,6 +2352,7 @@
                 productId: filters.value.productId,
                 docType: filters.value.docType,
                 keyword: filters.value.keyword,
+                isRegex: filters.value.isRegex ? "true" : "false",
               });
               if (
                 filters.value.docCategory &&
@@ -2341,6 +2382,18 @@
             if (newPage > totalPages.value) newPage = totalPages.value;
             docPagination.value.page = newPage;
             loadDocuments();
+          };
+
+          const onSearchKeyUp = (e) => {
+            if (e && (e.key === "Enter" || e.keyCode === 13)) {
+              loadDocuments();
+            }
+          };
+
+          const onJumpPageKeyUp = (e) => {
+            if (e && (e.key === "Enter" || e.keyCode === 13)) {
+              jumpToPage();
+            }
           };
 
           const jumpToPage = () => {
@@ -2941,6 +2994,7 @@
             docList,
             selectedNIDs,
             filters,
+            searchPlaceholder,
             docPagination,
             downloadTasks,
             activeDownloadCount,
@@ -2960,11 +3014,14 @@
             availableDocCategories,
             setDocCategoryFilter,
             debounceSearch,
+            onSearchKeyUp,
+            toggleRegexMode,
             resetFilters,
             changePage,
             jumpPageInput,
             totalPages,
             jumpToPage,
+            onJumpPageKeyUp,
             toggleSelectAll,
             startDownloadSingle,
             batchDownloadSelected,

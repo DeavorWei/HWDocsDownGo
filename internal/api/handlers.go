@@ -204,6 +204,9 @@ func (h *ServerHandler) QueryDocuments(c *gin.Context) {
 		fail(c, 400, "参数格式错误")
 		return
 	}
+	if c.Query("isRegex") == "true" || c.Query("isRegex") == "1" {
+		q.IsRegex = true
+	}
 	res, err := h.repo.QueryDocuments(q)
 	if err != nil {
 		fail(c, 500, err.Error())

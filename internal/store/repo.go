@@ -167,19 +167,20 @@ func (r *Repository) GetSubModelsAndVersions(productID string) ([]SubModel, []Ve
 
 // DocFilterQuery 文档筛选查询参数
 type DocFilterQuery struct {
-	CategoryID       string `form:"categoryId"`
-	ProductLineID    string `form:"productLineId"`
-	Series           string `form:"series"`           // 产品系列（如：园区交换机、园区网络解决方案等）
-	ProductID        string `form:"productId"`        // 具体产品型号
-	VersionID        string `form:"versionId"`
-	SubModelID       string `form:"subModelId"`
-	DocType          string `form:"docType"`          // 全部, HDX, CHM, PDF, 多媒体 等
-	DocCategory      string `form:"docCategory"`      // 产品文档包, 资料书架, 方案概述, 特性描述 等
-	DocCategoryGroup string `form:"docCategoryGroup"` // 文档合集, 了解产品, 了解方案 等
-	IsDownloaded     *int   `form:"isDownloaded"`     // 0 或 1，空表示全部
-	Keyword          string `form:"keyword"`
-	Page             int    `form:"page,default=1"`
-	PageSize         int    `form:"pageSize,default=20"`
+	CategoryID       string `form:"categoryId" json:"categoryId"`
+	ProductLineID    string `form:"productLineId" json:"productLineId"`
+	Series           string `form:"series" json:"series"`           // 产品系列（如：园区交换机、园区网络解决方案等）
+	ProductID        string `form:"productId" json:"productId"`        // 具体产品型号
+	VersionID        string `form:"versionId" json:"versionId"`
+	SubModelID       string `form:"subModelId" json:"subModelId"`
+	DocType          string `form:"docType" json:"docType"`          // 全部, HDX, CHM, PDF, 多媒体 等
+	DocCategory      string `form:"docCategory" json:"docCategory"`      // 产品文档包, 资料书架, 方案概述, 特性描述 等
+	DocCategoryGroup string `form:"docCategoryGroup" json:"docCategoryGroup"` // 文档合集, 了解产品, 了解方案 等
+	IsDownloaded     *int   `form:"isDownloaded" json:"isDownloaded"`     // 0 或 1，空表示全部
+	Keyword          string `form:"keyword" json:"keyword"`
+	IsRegex          bool   `form:"isRegex" json:"isRegex"`          // 是否开启正则表达式搜索
+	Page             int    `form:"page,default=1" json:"page"`
+	PageSize         int    `form:"pageSize,default=20" json:"pageSize"`
 }
 
 // DocFilterResult 文档筛选分页返回
@@ -190,7 +191,7 @@ type DocFilterResult struct {
 	Items    []Document `json:"items"`
 }
 
-// QueryDocuments 多条件组合筛选文档
+// QueryDocuments 多条件组合筛选文档 (支持多关键词 AND 检索与正则表达式高级搜索)
 func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) {
 	query := r.db.Model(&Document{})
 
@@ -249,15 +250,6 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	if q.IsDownloaded != nil {
 		query = query.Where("is_downloaded = ?", *q.IsDownloaded)
 	}
-	if q.Keyword != "" {
-		kw := "%" + q.Keyword + "%"
-		query = query.Where("name LIKE ? OR file_name LIKE ? OR product_name LIKE ? OR doc_category LIKE ? OR doc_category_group LIKE ?", kw, kw, kw, kw, kw)
-	}
-
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, err
-	}
 
 	if q.Page <= 0 {
 		q.Page = 1
@@ -267,53 +259,83 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 	}
 	offset := (q.Page - 1) * q.PageSize
 
+	kwText := strings.TrimSpace(q.Keyword)
+	isRegexSearch := q.IsRegex || strings.HasPrefix(kwText, "regex:")
+	if strings.HasPrefix(kwText, "regex:") {
+		kwText = strings.TrimPrefix(kwText, "regex:")
+		kwText = strings.TrimSpace(kwText)
+	}
+
+	// ---------------- 1. 正则表达式搜索模式 ----------------
+	if isRegexSearch && kwText != "" {
+		re, err := regexp.Compile("(?i)" + kwText)
+		if err != nil {
+			logger.Warn("用户输入的正则表达式不合法", zap.String("pattern", kwText), zap.Error(err))
+			return &DocFilterResult{Total: 0, Page: q.Page, PageSize: q.PageSize, Items: []Document{}}, nil
+		}
+
+		var candidateDocs []Document
+		if err := query.Order("is_downloaded DESC, is_new_version DESC, publish_date DESC, name ASC").Find(&candidateDocs).Error; err != nil {
+			return nil, err
+		}
+
+		var matchedDocs []Document
+		for _, d := range candidateDocs {
+			if re.MatchString(d.Name) ||
+				re.MatchString(d.FileName) ||
+				re.MatchString(d.ProductName) ||
+				re.MatchString(d.NID) ||
+				re.MatchString(d.DocCategory) ||
+				re.MatchString(d.DocCategoryGroup) ||
+				re.MatchString(d.ProductLineName) ||
+				re.MatchString(d.CategoryName) {
+				matchedDocs = append(matchedDocs, d)
+			}
+		}
+
+		total := int64(len(matchedDocs))
+		var docs []Document
+		if offset >= len(matchedDocs) {
+			docs = []Document{}
+		} else {
+			end := offset + q.PageSize
+			if end > len(matchedDocs) {
+				end = len(matchedDocs)
+			}
+			docs = matchedDocs[offset:end]
+		}
+
+		r.fillHasLocalOlderVersion(docs)
+		return &DocFilterResult{
+			Total:    total,
+			Page:     q.Page,
+			PageSize: q.PageSize,
+			Items:    docs,
+		}, nil
+	}
+
+	// ---------------- 2. 多关键词 AND 联合搜索模式 (空格分隔多个关键词) ----------------
+	if kwText != "" {
+		tokens := strings.Fields(kwText)
+		for _, token := range tokens {
+			kw := "%" + token + "%"
+			query = query.Where("(name LIKE ? OR file_name LIKE ? OR product_name LIKE ? OR nid LIKE ? OR doc_category LIKE ? OR doc_category_group LIKE ? OR product_line_name LIKE ? OR category_name LIKE ?)",
+				kw, kw, kw, kw, kw, kw, kw, kw)
+		}
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
 	var docs []Document
 	err := query.Order("is_downloaded DESC, is_new_version DESC, publish_date DESC, name ASC").Offset(offset).Limit(q.PageSize).Find(&docs).Error
 	if err != nil {
 		return nil, err
 	}
 
-	// 针对当前页文档，计算是否有同产品同系列且本地已下载的历史旧版本
-	if len(docs) > 0 {
-		var productIDs []string
-		pidSet := make(map[string]bool)
-		for _, d := range docs {
-			if d.IsNewVersion && d.ProductID != "" && !pidSet[d.ProductID] {
-				pidSet[d.ProductID] = true
-				productIDs = append(productIDs, d.ProductID)
-			}
-		}
-
-		if len(productIDs) > 0 {
-			var downloadedDocs []Document
-			r.db.Model(&Document{}).
-				Where("product_id IN ? AND is_downloaded = 1", productIDs).
-				Select("nid, product_id, name, doc_type, publish_date, publish_time").
-				Find(&downloadedDocs)
-
-			// 分组存储已下载旧版本的最高发布时间与集合
-			downloadedGroupMap := make(map[string][]Document)
-			for _, dd := range downloadedDocs {
-				gKey := dd.ProductID + "::" + calcBaseGroupKey(dd.Name, dd.DocType)
-				downloadedGroupMap[gKey] = append(downloadedGroupMap[gKey], dd)
-			}
-
-			for i := range docs {
-				if docs[i].IsNewVersion {
-					gKey := docs[i].ProductID + "::" + calcBaseGroupKey(docs[i].Name, docs[i].DocType)
-					if dlist, ok := downloadedGroupMap[gKey]; ok {
-						for _, dl := range dlist {
-							// 存在已下载记录且 NID 不同（或已下载记录的发布时间早于当前文档），表明本地存在旧版
-							if dl.NID != docs[i].NID || (dl.PublishDate != "" && dl.PublishDate < docs[i].PublishDate) {
-								docs[i].HasLocalOlderVersion = true
-								break
-							}
-						}
-					}
-				}
-			}
-		}
-	}
+	r.fillHasLocalOlderVersion(docs)
 
 	return &DocFilterResult{
 		Total:    total,
@@ -321,6 +343,54 @@ func (r *Repository) QueryDocuments(q DocFilterQuery) (*DocFilterResult, error) 
 		PageSize: q.PageSize,
 		Items:    docs,
 	}, nil
+}
+
+// fillHasLocalOlderVersion 针对当前页文档集合，计算并打标是否存在同产品同系列本地已下载的历史旧版本
+func (r *Repository) fillHasLocalOlderVersion(docs []Document) {
+	if len(docs) == 0 {
+		return
+	}
+
+	var productIDs []string
+	pidSet := make(map[string]bool)
+	for _, d := range docs {
+		if d.IsNewVersion && d.ProductID != "" && !pidSet[d.ProductID] {
+			pidSet[d.ProductID] = true
+			productIDs = append(productIDs, d.ProductID)
+		}
+	}
+
+	if len(productIDs) == 0 {
+		return
+	}
+
+	var downloadedDocs []Document
+	r.db.Model(&Document{}).
+		Where("product_id IN ? AND is_downloaded = 1", productIDs).
+		Select("nid, product_id, name, doc_type, publish_date, publish_time").
+		Find(&downloadedDocs)
+
+	// 分组存储已下载旧版本的最高发布时间与集合
+	downloadedGroupMap := make(map[string][]Document)
+	for _, dd := range downloadedDocs {
+		gKey := dd.ProductID + "::" + calcBaseGroupKey(dd.Name, dd.DocType)
+		downloadedGroupMap[gKey] = append(downloadedGroupMap[gKey], dd)
+	}
+
+	for i := range docs {
+		if docs[i].IsNewVersion {
+			gKey := docs[i].ProductID + "::" + calcBaseGroupKey(docs[i].Name, docs[i].DocType)
+			if dlist, ok := downloadedGroupMap[gKey]; ok {
+				for _, dl := range dlist {
+					// 存在已下载记录且 NID 不同（或已下载记录的发布时间早于当前文档），表明本地存在旧版
+					if dl.NID != docs[i].NID || (dl.PublishDate != "" && dl.PublishDate < docs[i].PublishDate) {
+						docs[i].HasLocalOlderVersion = true
+						break
+					}
+				}
+			}
+		}
+	}
 }
 
 // GetDocCategories 获取数据库中已有的所有资料分类标签列表（如：产品文档包、资料书架、方案概述、特性描述等）
