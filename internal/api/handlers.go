@@ -1,8 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -504,4 +508,56 @@ func (h *ServerHandler) Shutdown(c *gin.Context) {
 			os.Exit(0)
 		}
 	})
+}
+
+// OpenFolder 打开本地文件所在目录并在 Windows 资源管理器中高亮选中该文件
+func (h *ServerHandler) OpenFolder(c *gin.Context) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Path) == "" {
+		fail(c, 400, "路径不能为空")
+		return
+	}
+
+	targetPath := filepath.Clean(strings.TrimSpace(req.Path))
+
+	// 检查路径是否存在
+	fi, err := os.Stat(targetPath)
+	if err != nil {
+		// 若文件不存在，尝试打开其父目录
+		parentDir := filepath.Dir(targetPath)
+		if pFi, pErr := os.Stat(parentDir); pErr == nil && pFi.IsDir() {
+			if runtime.GOOS == "windows" {
+				_ = exec.Command("explorer.exe", parentDir).Start()
+				success(c, gin.H{"opened": parentDir, "message": "目标文件不存在，已打开所在父目录"})
+				return
+			}
+		}
+		fail(c, 404, fmt.Sprintf("目标路径不存在: %s", targetPath))
+		return
+	}
+
+	if runtime.GOOS == "windows" {
+		var cmd *exec.Cmd
+		if fi.IsDir() {
+			cmd = exec.Command("explorer.exe", targetPath)
+		} else {
+			// 定位并选中文件: explorer.exe /select, "C:\path\to\file"
+			cmd = exec.Command("explorer.exe", "/select,", targetPath)
+		}
+		if err := cmd.Start(); err != nil {
+			logger.Error("打开 Windows 资源管理器失败", zap.String("path", targetPath), zap.Error(err))
+			fail(c, 500, fmt.Sprintf("打开资源管理器失败: %v", err))
+			return
+		}
+		success(c, gin.H{"opened": targetPath})
+		return
+	} else if runtime.GOOS == "darwin" {
+		_ = exec.Command("open", "-R", targetPath).Start()
+	} else {
+		_ = exec.Command("xdg-open", filepath.Dir(targetPath)).Start()
+	}
+
+	success(c, gin.H{"opened": targetPath})
 }

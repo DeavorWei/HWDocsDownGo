@@ -68,6 +68,7 @@ func SetupRouter(h *ServerHandler, staticFS fs.FS) *gin.Engine {
 		apiGroup.GET("/statistics", h.GetStatistics)
 		apiGroup.GET("/settings", h.GetSettings)
 		apiGroup.POST("/settings", h.UpdateSettings)
+		apiGroup.POST("/system/open-folder", h.OpenFolder)
 		apiGroup.POST("/system/shutdown", h.Shutdown)
 	}
 

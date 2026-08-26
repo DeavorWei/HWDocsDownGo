@@ -833,9 +833,22 @@
                         <h4 class="font-medium text-slate-900 text-sm">
                           {{ task.docName }}
                         </h4>
-                        <p class="text-xs text-slate-400 font-mono">
-                          {{ task.fileName || task.docNid }}
-                        </p>
+                        <div class="text-xs text-slate-400 font-mono mt-0.5 flex items-center flex-wrap gap-2">
+                          <span
+                            >编号:
+                            <code
+                              class="bg-slate-100 px-1 py-0.5 rounded text-slate-600 text-[11px]"
+                              >{{ task.docNid }}</code
+                            ></span
+                          >
+                          <span
+                            v-if="task.fileName && task.fileName !== task.docName"
+                            class="text-slate-500 truncate max-w-sm"
+                            :title="'文件名: ' + task.fileName"
+                          >
+                            文件: {{ task.fileName }}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
@@ -1345,13 +1358,24 @@
                     class="block text-xs font-semibold text-slate-700 mb-1.5"
                     >文档下载保存根目录 (系统已锁定)</label
                   >
-                  <div
-                    class="w-full bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-600 font-mono select-all"
-                  >
-                    {{ config.downloadDir || 'HWDDGoData/Downloads' }}
+                  <div class="flex items-center space-x-2">
+                    <div
+                      class="flex-1 bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-600 font-mono select-all"
+                    >
+                      {{ config.downloadDir || 'HWDDGoData/Downloads' }}
+                    </div>
+                    <button
+                      type="button"
+                      @click="openLocalFolder(config.downloadDir)"
+                      class="px-3.5 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg transition inline-flex items-center space-x-1.5 cursor-pointer shadow-xs"
+                      title="在 Windows 资源管理器中打开下载根目录"
+                    >
+                      <i class="fa-regular fa-folder-open text-slate-600"></i>
+                      <span>打开目录</span>
+                    </button>
                   </div>
                   <p class="text-xs text-slate-400 mt-1">
-                    🔒 下载目录已固定为 HWDDGoData/Downloads，系统不开放自定义路径以保障运行安全。
+                    🔒 下载目录已固定为 HWDDGoData/Downloads，点击右侧按钮可直接打开该目录。
                   </p>
                 </div>
 
@@ -2549,9 +2573,25 @@
             }
           };
 
-          const openLocalFolder = (path) => {
-            if (!path) return;
-            showToast("下载目录位置: " + path, "info");
+          const openLocalFolder = async (path) => {
+            if (!path) {
+              showToast("目标文件或目录路径为空", "warning");
+              return;
+            }
+            try {
+              const res = await fetch("/api/system/open-folder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path }),
+              }).then((r) => r.json());
+              if (res.code === 0) {
+                showToast("已在 Windows 资源管理器中打开并定位文件");
+              } else {
+                showToast("定位文件失败: " + res.message, "error");
+              }
+            } catch (e) {
+              showToast("打开本地目录请求失败: " + e.message, "error");
+            }
           };
 
           const openCookieModal = (tip = "") => {

@@ -157,10 +157,11 @@ func (s *LocalScanner) ScanDirectory(dirPath string) (*ScanResult, error) {
 		return nil, err
 	}
 
-	// 3. 批量更新数据库打标（事务批量更新）
-	if len(matchedMap) > 0 {
-		_ = s.repo.BatchUpdateDocsDownloaded(matchedMap)
-		logger.Info("批量打标已下载文档成功", zap.Int("updatedDocs", len(matchedMap)))
+	// 3. 全量状态同步（匹配到的打标 1，本地未匹配到/已被删除的重置为 0）
+	if err := s.repo.SyncDownloadedDocs(matchedMap); err != nil {
+		logger.Error("同步本地文档下载状态失败", zap.Error(err))
+	} else {
+		logger.Info("同步本地文档下载状态成功", zap.Int("matchedDocs", len(matchedMap)))
 	}
 
 	logger.Info("本地下载目录扫描完成",

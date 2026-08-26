@@ -369,6 +369,49 @@ func (r *Repository) UpdateDocDownloaded(nid string, isDownloaded int, localPath
 	}).Error
 }
 
+// SyncDownloadedDocs 全量同步已下载文档状态（双向对齐：匹配到的打标 1，磁盘不存在的重置为 0）
+func (r *Repository) SyncDownloadedDocs(nidPathMap map[string]string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+
+		// 1. 如果匹配结果为空，说明本地无任何已下载文档，全部置 0
+		if len(nidPathMap) == 0 {
+			return tx.Model(&Document{}).Where("is_downloaded = ?", 1).Updates(map[string]interface{}{
+				"is_downloaded": 0,
+				"local_path":    "",
+				"updated_at":    now,
+			}).Error
+		}
+
+		// 2. 提取匹配的 NID 列表
+		matchedNIDs := make([]string, 0, len(nidPathMap))
+		for nid := range nidPathMap {
+			matchedNIDs = append(matchedNIDs, nid)
+		}
+
+		// 3. 将不在 matchedNIDs 范围内但此前被标记为已下载的文档重置为 0
+		if err := tx.Model(&Document{}).Where("is_downloaded = ? AND nid NOT IN ?", 1, matchedNIDs).Updates(map[string]interface{}{
+			"is_downloaded": 0,
+			"local_path":    "",
+			"updated_at":    now,
+		}).Error; err != nil {
+			return err
+		}
+
+		// 4. 批量更新当前匹配到的文档为已下载
+		for nid, path := range nidPathMap {
+			if err := tx.Model(&Document{}).Where("nid = ?", nid).Updates(map[string]interface{}{
+				"is_downloaded": 1,
+				"local_path":    path,
+				"updated_at":    now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // BatchUpdateDocsDownloaded 批量更新文档已下载状态（事务批处理防锁库与提升写入性能）
 func (r *Repository) BatchUpdateDocsDownloaded(nidPathMap map[string]string) error {
 	if len(nidPathMap) == 0 {
