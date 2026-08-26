@@ -73,7 +73,12 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 	// 组装 Header 与 Cookie
 	cookieStr := "supportelang=zh; lang=zh; support_last_vist=enterprise; browsehappy=browsehappy"
 	if strings.TrimSpace(cfg.CustomCookie) != "" {
-		cookieStr = cookieStr + "; " + strings.TrimSpace(cfg.CustomCookie)
+		cleanedCookie := strings.ReplaceAll(cfg.CustomCookie, "\r", "")
+		cleanedCookie = strings.ReplaceAll(cleanedCookie, "\n", " ")
+		cleanedCookie = strings.TrimSpace(cleanedCookie)
+		if cleanedCookie != "" {
+			cookieStr = cookieStr + "; " + cleanedCookie
+		}
 	}
 
 	c.reqMu.Lock()

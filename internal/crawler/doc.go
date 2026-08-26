@@ -333,14 +333,10 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 func (d *DocCrawler) FetchDocsByProductWithContext(ctx context.Context, product store.Product, lineName, catName string) ([]store.Document, error) {
 	workerID, workerTag := GetWorkerFromContext(ctx)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/product-pid-%s", product.ID)
-	// 精确对齐真实请求体参数：isAsc 必须为 0, orderBy 必须为 "name"
+	// 精确对齐真实请求体参数：必须严格按照浏览器实际发送的 8 个字段，多传字段会触发华为 WSF 安全网关校验拦截 (400)
 	reqPayload := map[string]interface{}{
 		"productId":        product.ID,
 		"businessScenario": "",
-		"channelId":        "support",
-		"lang":             "zh",
-		"offeringId":       product.ID,
-		"relateOfferingId": "",
 		"relateProductId":  "",
 		"subModelId":       "",
 		"isAsc":            0,
