@@ -329,14 +329,18 @@ func (d *DocCrawler) FetchDocsByProduct(product store.Product, lineName, catName
 	return d.FetchDocsByProductWithContext(context.Background(), product, lineName, catName)
 }
 
-// FetchDocsByProductWithContext 带有上下文取消支持的产品文档抓取
+// FetchDocsByProductWithContext 带有上下文取消支持的指定产品型号所有文档抓取
 func (d *DocCrawler) FetchDocsByProductWithContext(ctx context.Context, product store.Product, lineName, catName string) ([]store.Document, error) {
+	workerID, workerTag := GetWorkerFromContext(ctx)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/product-pid-%s", product.ID)
-
 	// 精确对齐真实请求体参数：isAsc 必须为 0, orderBy 必须为 "name"
 	reqPayload := map[string]interface{}{
 		"productId":        product.ID,
 		"businessScenario": "",
+		"channelId":        "support",
+		"lang":             "zh",
+		"offeringId":       product.ID,
+		"relateOfferingId": "",
 		"relateProductId":  "",
 		"subModelId":       "",
 		"isAsc":            0,
@@ -354,10 +358,12 @@ func (d *DocCrawler) FetchDocsByProductWithContext(ctx context.Context, product 
 		apiURL2 := "https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/doc/eos"
 		respBytes, err = d.client.DoRequest(ctx, "POST", apiURL2, bodyBytes, referer)
 		if err != nil {
-			logger.Warn("获取产品文档列表失败",
-				zap.String("product", product.Name),
-				zap.String("pid", product.ID),
-				zap.Error(err),
+			logger.Warn(FormatWorkerMsg(workerTag, "获取产品文档列表失败"),
+				append([]zap.Field{
+					zap.String("product", product.Name),
+					zap.String("pid", product.ID),
+					zap.Error(err),
+				}, WorkerZapFields(workerID)...)...,
 			)
 			return nil, err
 		}
@@ -369,7 +375,12 @@ func (d *DocCrawler) FetchDocsByProductWithContext(ctx context.Context, product 
 	}
 
 	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		logger.Error("解析产品文档列表 JSON 失败", zap.String("product", product.Name), zap.Error(err))
+		logger.Error(FormatWorkerMsg(workerTag, "解析产品文档列表 JSON 失败"),
+			append([]zap.Field{
+				zap.String("product", product.Name),
+				zap.Error(err),
+			}, WorkerZapFields(workerID)...)...,
+		)
 		return nil, fmt.Errorf("解析文档列表 JSON 失败: %w", err)
 	}
 
@@ -448,9 +459,11 @@ func (d *DocCrawler) FetchDocsByProductWithContext(ctx context.Context, product 
 	// 4. 批量入库
 	if len(docs) > 0 {
 		d.repo.UpsertDocuments(docs)
-		logger.Debug("成功解析分类标签、识别新旧版本并入库产品文档",
-			zap.String("product", product.Name),
-			zap.Int("docCount", len(docs)),
+		logger.Debug(FormatWorkerMsg(workerTag, "成功解析分类标签、识别新旧版本并入库产品文档"),
+			append([]zap.Field{
+				zap.String("product", product.Name),
+				zap.Int("docCount", len(docs)),
+			}, WorkerZapFields(workerID)...)...,
 		)
 	}
 

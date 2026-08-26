@@ -128,16 +128,29 @@ func (c *CategoryCrawler) FetchCategories() ([]store.Category, error) {
 	return categories, nil
 }
 
-// FetchProductsByLine 抓取指定产品线下的产品系列
+// FetchProductsByLine 抓取指定产品线下的产品系列 (兼容无 Context 调用)
 func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]store.Product, error) {
+	return c.FetchProductsByLineWithContext(context.Background(), lineID, linePid)
+}
+
+// FetchProductsByLineWithContext 带有上下文 (可附带 Worker 编号与取消信号) 的产品型号树抓取
+func (c *CategoryCrawler) FetchProductsByLineWithContext(ctx context.Context, lineID string, linePid string) ([]store.Product, error) {
 	if linePid == "" {
 		linePid = lineID
 	}
+	workerID, workerTag := GetWorkerFromContext(ctx)
+
 	apiURL := fmt.Sprintf("https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/sub-model?selfPbiId=%s&submodel=doc", linePid)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/category/switches-pid-%s?submodel=doc", linePid)
-	body, err := c.client.DoRequest(context.Background(), "GET", apiURL, nil, referer)
+	body, err := c.client.DoRequest(ctx, "GET", apiURL, nil, referer)
 	if err != nil {
-		logger.Warn("抓取产品线型号树失败", zap.String("lineId", lineID), zap.String("url", apiURL), zap.Error(err))
+		logger.Warn(FormatWorkerMsg(workerTag, "抓取产品线型号树失败"),
+			append([]zap.Field{
+				zap.String("lineId", lineID),
+				zap.String("url", apiURL),
+				zap.Error(err),
+			}, WorkerZapFields(workerID)...)...,
+		)
 		return nil, fmt.Errorf("抓取产品型号树失败: %w", err)
 	}
 
@@ -170,7 +183,12 @@ func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		logger.Error("解析产品型号树 JSON 失败", zap.String("lineId", lineID), zap.Error(err))
+		logger.Error(FormatWorkerMsg(workerTag, "解析产品型号树 JSON 失败"),
+			append([]zap.Field{
+				zap.String("lineId", lineID),
+				zap.Error(err),
+			}, WorkerZapFields(workerID)...)...,
+		)
 		return nil, fmt.Errorf("解析产品型号树 JSON 失败: %w", err)
 	}
 
@@ -223,12 +241,24 @@ func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]
 		}
 	}
 
+	lineName := resp.Data.ProductLineName
+	if lineName == "" {
+		if l, _ := c.repo.GetProductLineByID(lineID); l != nil && l.Name != "" {
+			lineName = l.Name
+		} else {
+			lineName = lineID
+		}
+	}
+
 	if len(products) == 0 {
-		logger.Warn("产品线解析结果为空（未获取到型号列表）",
-			zap.String("lineId", lineID),
-			zap.String("linePid", linePid),
-			zap.String("requestUrl", apiURL),
-			zap.String("responseBody", string(body)),
+		logger.Warn(FormatWorkerMsg(workerTag, fmt.Sprintf("产品线 [%s] 解析结果为空（未获取到型号列表）", lineName)),
+			append([]zap.Field{
+				zap.String("lineName", lineName),
+				zap.String("lineId", lineID),
+				zap.String("linePid", linePid),
+				zap.String("requestUrl", apiURL),
+				zap.String("responseBody", string(body)),
+			}, WorkerZapFields(workerID)...)...,
 		)
 
 		// 容错兜底：若该产品线本身是独立单品/解决方案（华为未分配 sub-model 树，直接挂载版本与文档），将其自身收录为产品型号
@@ -244,30 +274,45 @@ func (c *CategoryCrawler) FetchProductsByLine(lineID string, linePid string) ([]
 			}
 			products = append(products, singleProd)
 			c.repo.UpsertProducts(products)
-			logger.Info("产品线本身为独立单品/解决方案，已作为独立型号自动收录",
-				zap.String("lineName", line.Name),
-				zap.String("productId", line.ProID),
+			logger.Info(FormatWorkerMsg(workerTag, fmt.Sprintf("产品线 [%s] 本身为独立单品/解决方案，已作为独立型号自动收录", line.Name)),
+				append([]zap.Field{
+					zap.String("lineName", line.Name),
+					zap.String("productId", line.ProID),
+				}, WorkerZapFields(workerID)...)...,
 			)
 		}
 	} else {
 		c.repo.UpsertProducts(products)
-		logger.Debug("产品线型号入库完成",
-			zap.String("lineName", resp.Data.ProductLineName),
-			zap.Int("productCount", len(products)),
+		logger.Debug(FormatWorkerMsg(workerTag, fmt.Sprintf("产品线 [%s] 型号入库完成", lineName)),
+			append([]zap.Field{
+				zap.String("lineName", lineName),
+				zap.Int("productCount", len(products)),
+			}, WorkerZapFields(workerID)...)...,
 		)
 	}
 
 	return products, nil
 }
 
-// FetchSubModelsAndVersions 抓取产品型号下的细分子型号与版本
+// FetchSubModelsAndVersions 抓取产品型号下的细分子型号与版本 (兼容无 Context 调用)
 func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.SubModel, []store.Version, error) {
-	logger.Debug("开始抓取产品型号的细分子型号与版本", zap.String("productId", productID))
+	return c.FetchSubModelsAndVersionsWithContext(context.Background(), productID)
+}
+
+// FetchSubModelsAndVersionsWithContext 带有上下文的产品型号细分子型号与版本抓取
+func (c *CategoryCrawler) FetchSubModelsAndVersionsWithContext(ctx context.Context, productID string) ([]store.SubModel, []store.Version, error) {
+	workerID, workerTag := GetWorkerFromContext(ctx)
+
+	logger.Debug(FormatWorkerMsg(workerTag, "开始抓取产品型号的细分子型号与版本"),
+		append([]zap.Field{zap.String("productId", productID)}, WorkerZapFields(workerID)...)...,
+	)
 	apiURL := fmt.Sprintf("https://support.huawei.com/supportgateway/supproductservice/v1/enterprise/aggregation/sub-model-and-version/pc?subModelOfferingId=&pbiId=%s", productID)
 	referer := fmt.Sprintf("https://support.huawei.com/enterprise/zh/product-pid-%s", productID)
-	body, err := c.client.DoRequest(context.Background(), "GET", apiURL, nil, referer)
+	body, err := c.client.DoRequest(ctx, "GET", apiURL, nil, referer)
 	if err != nil {
-		logger.Warn("抓取子型号与版本网络失败", zap.String("productId", productID), zap.Error(err))
+		logger.Warn(FormatWorkerMsg(workerTag, "抓取子型号与版本网络失败"),
+			append([]zap.Field{zap.String("productId", productID), zap.Error(err)}, WorkerZapFields(workerID)...)...,
+		)
 		return nil, nil, fmt.Errorf("抓取子型号与版本失败: %w", err)
 	}
 
@@ -288,7 +333,9 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 	}
 
 	if err := json.Unmarshal(body, &resp); err != nil {
-		logger.Error("解析子型号与版本 JSON 失败", zap.String("productId", productID), zap.Error(err))
+		logger.Error(FormatWorkerMsg(workerTag, "解析子型号与版本 JSON 失败"),
+			append([]zap.Field{zap.String("productId", productID), zap.Error(err)}, WorkerZapFields(workerID)...)...,
+		)
 		return nil, nil, fmt.Errorf("解析子型号与版本 JSON 失败: %w", err)
 	}
 
@@ -329,10 +376,12 @@ func (c *CategoryCrawler) FetchSubModelsAndVersions(productID string) ([]store.S
 		c.repo.UpsertVersions(versions)
 	}
 
-	logger.Debug("子型号与版本解析入库成功",
-		zap.String("productId", productID),
-		zap.Int("subModels", len(subModels)),
-		zap.Int("versions", len(versions)),
+	logger.Debug(FormatWorkerMsg(workerTag, "子型号与版本解析入库成功"),
+		append([]zap.Field{
+			zap.String("productId", productID),
+			zap.Int("subModels", len(subModels)),
+			zap.Int("versions", len(versions)),
+		}, WorkerZapFields(workerID)...)...,
 	)
 	return subModels, versions, nil
 }
@@ -414,10 +463,11 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 		go func(workerID int) {
 			defer wg.Done()
 			workerTag := fmt.Sprintf("[爬虫-%d]", workerID)
+			workerCtx := WithWorkerContext(context.Background(), workerID)
 
 			for task := range taskChan {
 				line := task.line
-				prods, err := c.FetchProductsByLine(line.ID, line.ProID)
+				prods, err := c.FetchProductsByLineWithContext(workerCtx, line.ID, line.ProID)
 				if err == nil {
 					atomic.AddInt64(&totalProducts, int64(len(prods)))
 					logger.Info(fmt.Sprintf("%s 产品线 [%s] 解析成功", workerTag, line.Name),

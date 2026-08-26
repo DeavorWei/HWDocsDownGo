@@ -137,14 +137,15 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 
 				prod := task.prod
 				send("   %s [%d/%d] 正在抓取型号: %s (PID: %s)...", workerTag, task.index, task.total, prod.Name, prod.ID)
-				logger.Debug("爬虫工作协程开始抓取型号",
+				logger.Debug(FormatWorkerMsg(workerTag, "爬虫工作协程开始抓取型号"),
 					zap.Int("workerId", workerID),
 					zap.String("product", prod.Name),
 					zap.String("pid", prod.ID),
 				)
 
-				e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-				docs, err := e.docCrawler.FetchDocsByProductWithContext(ctx, prod, task.lineName, task.catName)
+				workerCtx := WithWorkerContext(ctx, workerID)
+				e.catCrawler.FetchSubModelsAndVersionsWithContext(workerCtx, prod.ID)
+				docs, err := e.docCrawler.FetchDocsByProductWithContext(workerCtx, prod, task.lineName, task.catName)
 				if err == nil && len(docs) > 0 {
 					atomic.AddInt64(&totalDocsCount, int64(len(docs)))
 					send("   %s 📄 型号 [%s] 发现并入库 %d 篇产品文档", workerTag, prod.Name, len(docs))
@@ -252,7 +253,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 			}
 
 			send("   [%d/%d] 正在分析产品线: %s (PID: %s)...", lineIdx+1, totalLines, line.Name, line.ProID)
-			prods, err := e.catCrawler.FetchProductsByLine(line.ID, line.ProID)
+			prods, err := e.catCrawler.FetchProductsByLineWithContext(ctx, line.ID, line.ProID)
 			if err != nil {
 				send("   ⚠️ 产品线 [%s] 获取型号异常: %v", line.Name, err)
 				continue
@@ -347,28 +348,29 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				prod = &store.Product{ID: productID, Name: productID}
 			}
 
-			logger.Info("定向抓取单个型号", zap.String("product", prodName), zap.String("productId", productID))
+			workerCtx := WithWorkerContext(ctx, 1)
+			logger.Info("[爬虫-1] 定向抓取单个型号", zap.Int("workerId", 1), zap.String("product", prodName), zap.String("productId", productID))
 			send("🚀 [爬虫-1] 启动指定产品型号 [%s] 定向爬取...", prodName)
 			if onProgress != nil {
 				onProgress(1, 1, fmt.Sprintf("型号: %s ([爬虫-1])", prodName))
 			}
 
-			e.catCrawler.FetchSubModelsAndVersions(prod.ID)
-			docs, err := e.docCrawler.FetchDocsByProductWithContext(ctx, *prod, lineName, "")
+			e.catCrawler.FetchSubModelsAndVersionsWithContext(workerCtx, prod.ID)
+			docs, err := e.docCrawler.FetchDocsByProductWithContext(workerCtx, *prod, lineName, "")
 			if err != nil {
 				if IsWsfCheckError(err) {
-					logger.Warn("网关 WSF 安全校验拦截熔断", zap.String("product", prodName))
+					logger.Warn("[爬虫-1] 网关 WSF 安全校验拦截熔断", zap.Int("workerId", 1), zap.String("product", prodName))
 					send("🚨 [爬虫-1]【安全拦截与自动熔断】检测到华为网关 WSF Check 校验拦截！请在系统设置中填入 Cookie。")
 					e.notifyFinished(false, "网关安全拦截已熔断")
 					return
 				}
-				logger.Error("抓取型号文档异常", zap.String("product", prodName), zap.Error(err))
+				logger.Error("[爬虫-1] 抓取型号文档异常", zap.Int("workerId", 1), zap.String("product", prodName), zap.Error(err))
 				send("⚠️ [爬虫-1] 抓取型号 [%s] 文档异常: %v", prodName, err)
 				e.notifyFinished(false, "抓取文档异常")
 				return
 			}
 
-			logger.Info("型号定向爬取完成", zap.String("product", prodName), zap.Int("docCount", len(docs)))
+			logger.Info("[爬虫-1] 型号定向爬取完成", zap.Int("workerId", 1), zap.String("product", prodName), zap.Int("docCount", len(docs)))
 			send("🎉 [爬虫-1] 产品型号 [%s] 爬取完成！共入库 %d 篇产品文档", prodName, len(docs))
 			e.notifyFinished(true, "产品型号爬取完成")
 			return
@@ -388,7 +390,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 
 			logger.Info("定向抓取产品线", zap.String("lineName", lineName), zap.String("lineId", lineID))
 			send("🚀 启动指定产品线 [%s] 快速深度爬取 (并发线程数: %d)...", lineName, threads)
-			prods, err := e.catCrawler.FetchProductsByLine(lineID, linePID)
+			prods, err := e.catCrawler.FetchProductsByLineWithContext(ctx, lineID, linePID)
 			if err != nil {
 				logger.Error("获取产品型号列表失败", zap.String("lineName", lineName), zap.Error(err))
 				send("❌ 获取产品型号列表失败: %v", err)
@@ -442,7 +444,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 				}
 
 				send("   [%d/%d] 正在分析产品线: %s (PID: %s)...", lineIdx+1, len(lines), line.Name, line.ProID)
-				prods, err := e.catCrawler.FetchProductsByLine(line.ID, line.ProID)
+				prods, err := e.catCrawler.FetchProductsByLineWithContext(ctx, line.ID, line.ProID)
 				if err != nil {
 					send("   ⚠️ 产品线 [%s] 获取型号异常: %v", line.Name, err)
 					continue
