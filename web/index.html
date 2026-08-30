@@ -2136,10 +2136,20 @@
               const wa = statusWeight(a.status);
               const wb = statusWeight(b.status);
               if (wa !== wb) return wa - wb;
-              return (
-                (b.updatedAt || "").localeCompare(a.updatedAt || "") ||
-                (b.createdAt || "").localeCompare(a.createdAt || "")
-              );
+
+              // 【核心修复】：对于已完成任务(status 2)，按完成时间倒序排列（最新完成的在最前）
+              if (a.status === 2 && b.status === 2) {
+                return (
+                  (b.updatedAt || "").localeCompare(a.updatedAt || "") ||
+                  (b.createdAt || "").localeCompare(a.createdAt || "")
+                );
+              }
+
+              // 对于下载中(status 1)、排队中(status 0)、暂停(4)、失败(3)任务：
+              // 必须按创建时间正序稳定排列 (createdAt ASC, id ASC)，杜绝进度刷新引起疯狂切换位置！
+              const timeCmp = (a.createdAt || "").localeCompare(b.createdAt || "");
+              if (timeCmp !== 0) return timeCmp;
+              return (a.id || "").localeCompare(b.id || "");
             });
           });
 

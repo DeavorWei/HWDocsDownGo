@@ -632,7 +632,9 @@ func (r *Repository) GetAllDownloadTasks() ([]DownloadTask, error) {
 			WHEN 3 THEN 4 
 			WHEN 2 THEN 5 
 			ELSE 6 
-		END ASC, updated_at DESC, created_at DESC`).Find(&tasks).Error
+		END ASC,
+		CASE WHEN status = 2 THEN updated_at END DESC,
+		created_at ASC, id ASC`).Find(&tasks).Error
 	if err != nil {
 		return nil, err
 	}
