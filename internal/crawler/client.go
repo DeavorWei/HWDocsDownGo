@@ -22,6 +22,7 @@ type HttpClient struct {
 	client     *http.Client
 	isFirstReq bool
 	reqMu      sync.Mutex
+	limiter    *AdaptiveRateLimiter
 }
 
 func NewHttpClient() *HttpClient {
@@ -32,6 +33,11 @@ func NewHttpClient() *HttpClient {
 		MaxIdleConnsPerHost: 20,
 		IdleConnTimeout:     90 * time.Second,
 	}
+	cfg := config.GetConfig()
+	initialThreads := 8
+	if cfg.CrawlerThreads > 0 {
+		initialThreads = cfg.CrawlerThreads
+	}
 	return &HttpClient{
 		client: &http.Client{
 			Jar:       jar,
@@ -39,7 +45,18 @@ func NewHttpClient() *HttpClient {
 			Timeout:   30 * time.Second,
 		},
 		isFirstReq: true,
+		limiter:    NewAdaptiveRateLimiter(initialThreads),
 	}
+}
+
+// GetLimiter 获取自适应限流协调器
+func (c *HttpClient) GetLimiter() *AdaptiveRateLimiter {
+	return c.limiter
+}
+
+// SetLimiter 设置自适应限流协调器
+func (c *HttpClient) SetLimiter(l *AdaptiveRateLimiter) {
+	c.limiter = l
 }
 
 // IsWsfCheckError 判断错误是否为华为网关 WSF 校验拦截
@@ -51,7 +68,7 @@ func IsWsfCheckError(err error) bool {
 	return strings.Contains(errMsg, "wsf check error") || strings.Contains(errMsg, "support-productservice-010001")
 }
 
-// DoRequest 发起带有完整现代 Chrome 浏览器特性的 HTTP 请求 (支持 Context 取消与重试自愈)
+// DoRequest 发起带有完整现代 Chrome 浏览器特性的 HTTP 请求 (支持 Context 取消、自适应降级与随机退避自愈)
 func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body []byte, referer string) ([]byte, error) {
 	cfg := config.GetConfig()
 	if cfg.RequestDelayMs > 0 {
@@ -68,6 +85,13 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	// 若存在限流退避冷却期，全局协程在此异步等待，并自带随机微抖动避免瞬时风暴
+	if c.limiter != nil {
+		if err := c.limiter.WaitCooldown(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	// 组装 Header 与 Cookie
@@ -98,11 +122,19 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 	}
 	c.reqMu.Unlock()
 
-	// 重试机制（最多 3 次）
+	// 重试机制（最多 5 次，为 429 限流随机退避自愈提供充裕窗口）
+	const maxAttempts = 5
 	var lastErr error
-	for attempt := 1; attempt <= 3; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+
+		// 若在重试前遇到其他协程触发的冷却期，等待冷却
+		if attempt > 1 && c.limiter != nil {
+			if err := c.limiter.WaitCooldown(ctx); err != nil {
+				return nil, err
+			}
 		}
 
 		// 【关键修复】：每次重试必须根据源 body 切片重新创建 Reader，避免 POST 重试时 Body 耗尽
@@ -145,16 +177,25 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 
 		if err != nil {
 			lastErr = err
-			logger.Warn("HTTP 请求连接失败，重试中...",
+			var backoff time.Duration = time.Duration(attempt*800) * time.Millisecond
+			if c.limiter != nil {
+				b, _, _ := c.limiter.ReportError(0, "", err)
+				if b > 0 {
+					backoff = b
+				}
+			}
+			logger.Warn("HTTP 请求连接失败，执行随机退避重试...",
 				zap.String("url", urlStr),
 				zap.Int("attempt", attempt),
+				zap.Int("maxAttempts", maxAttempts),
 				zap.Duration("latency", latency),
+				zap.Duration("backoff", backoff),
 				zap.Error(err),
 			)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(time.Duration(attempt*500) * time.Millisecond):
+			case <-time.After(backoff):
 			}
 			continue
 		}
@@ -183,6 +224,12 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 				)
 				return nil, fmt.Errorf("华为安全网关拦截 (WSF check error): %s", string(respBody))
 			}
+
+			// 上报成功请求，帮助自适应协调器探测并发健康状态
+			if c.limiter != nil {
+				c.limiter.ReportSuccess()
+			}
+
 			logger.Debug("HTTP 请求成功",
 				zap.String("url", urlStr),
 				zap.Int("status", resp.StatusCode),
@@ -205,11 +252,21 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 			return nil, fmt.Errorf("华为安全网关拦截 (WSF check error): %s", respBodyStr)
 		}
 
-		logger.Warn("HTTP 响应状态码异常",
+		// 遇到 429 限流或异常状态码：触发随机退避并调减并发线程数
+		var backoff time.Duration = time.Duration(attempt*1000) * time.Millisecond
+		var currentLimit int
+		if c.limiter != nil {
+			backoff, currentLimit, _ = c.limiter.ReportError(resp.StatusCode, respBodyStr, nil)
+		}
+
+		logger.Warn("HTTP 响应状态码异常，执行随机退避重试",
 			zap.String("url", urlStr),
 			zap.Int("status", resp.StatusCode),
 			zap.Int("attempt", attempt),
+			zap.Int("maxAttempts", maxAttempts),
 			zap.Duration("latency", latency),
+			zap.Duration("backoff", backoff),
+			zap.Int("currentConcurrencyLimit", currentLimit),
 			zap.String("response", truncate(respBodyStr, 150)),
 		)
 
@@ -217,11 +274,11 @@ func (c *HttpClient) DoRequest(ctx context.Context, method, urlStr string, body 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(attempt*500) * time.Millisecond):
+		case <-time.After(backoff):
 		}
 	}
 
-	logger.Error("HTTP 请求重试 3 次后仍失败", zap.String("url", urlStr), zap.Error(lastErr))
+	logger.Error(fmt.Sprintf("HTTP 请求重试 %d 次后仍失败", maxAttempts), zap.String("url", urlStr), zap.Error(lastErr))
 	return nil, lastErr
 }
 

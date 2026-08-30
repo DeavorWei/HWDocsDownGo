@@ -536,12 +536,18 @@ func (h *ServerHandler) OpenFolder(c *gin.Context) {
 	var req struct {
 		Path string `json:"path"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Path) == "" {
-		fail(c, 400, "路径不能为空")
-		return
-	}
+	_ = c.ShouldBindJSON(&req)
+	targetPath := strings.TrimSpace(req.Path)
+	cfg := config.GetConfig()
 
-	targetPath := filepath.Clean(strings.TrimSpace(req.Path))
+	// 若传入路径为空，默认打开配置中的下载保存目录
+	if targetPath == "" {
+		targetPath = cfg.DownloadDir
+	}
+	if targetPath == "" {
+		targetPath = "HWDDGoData/Downloads"
+	}
+	targetPath = filepath.Clean(targetPath)
 
 	// 检查路径是否存在
 	fi, err := os.Stat(targetPath)
@@ -553,6 +559,16 @@ func (h *ServerHandler) OpenFolder(c *gin.Context) {
 				_ = exec.Command("explorer.exe", parentDir).Start()
 				success(c, gin.H{"opened": parentDir, "message": "目标文件不存在，已打开所在父目录"})
 				return
+			}
+		}
+		// 若父目录也不存在，退回到默认下载目录
+		if cfg.DownloadDir != "" {
+			if dFi, dErr := os.Stat(cfg.DownloadDir); dErr == nil && dFi.IsDir() {
+				if runtime.GOOS == "windows" {
+					_ = exec.Command("explorer.exe", cfg.DownloadDir).Start()
+					success(c, gin.H{"opened": cfg.DownloadDir, "message": "已打开下载保存目录"})
+					return
+				}
 			}
 		}
 		fail(c, 404, fmt.Sprintf("目标路径不存在: %s", targetPath))
@@ -572,7 +588,7 @@ func (h *ServerHandler) OpenFolder(c *gin.Context) {
 			fail(c, 500, fmt.Sprintf("打开资源管理器失败: %v", err))
 			return
 		}
-		success(c, gin.H{"opened": targetPath})
+		success(c, gin.H{"opened": targetPath, "message": "已在资源管理器中打开"})
 		return
 	} else if runtime.GOOS == "darwin" {
 		_ = exec.Command("open", "-R", targetPath).Start()
@@ -580,5 +596,5 @@ func (h *ServerHandler) OpenFolder(c *gin.Context) {
 		_ = exec.Command("xdg-open", filepath.Dir(targetPath)).Start()
 	}
 
-	success(c, gin.H{"opened": targetPath})
+	success(c, gin.H{"opened": targetPath, "message": "已在资源管理器中打开"})
 }

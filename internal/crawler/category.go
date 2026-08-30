@@ -511,16 +511,23 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 		onProgress(status)
 	}
 
-	cfg := config.GetConfig()
 	numWorkers := 1
-	if cfg.CrawlerThreads > 0 {
-		numWorkers = cfg.CrawlerThreads
+	if c.client != nil && c.client.GetLimiter() != nil {
+		numWorkers = c.client.GetLimiter().GetLimit()
+	} else {
+		cfg := config.GetConfig()
+		if cfg.CrawlerThreads > 0 {
+			numWorkers = cfg.CrawlerThreads
+		}
 	}
 	if numWorkers > 32 {
 		numWorkers = 32
 	}
 	if numWorkers > len(allLines) && len(allLines) > 0 {
 		numWorkers = len(allLines)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
 	}
 
 	logger.Info("启动产品分类树多线程同步",
@@ -546,12 +553,23 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 
 	for w := 1; w <= numWorkers; w++ {
 		wg.Add(1)
-		go func(workerID int) {
+		workerID := w
+		logger.SafeGo(fmt.Sprintf("category-sync-worker-%d", workerID), func() {
 			defer wg.Done()
 			workerTag := fmt.Sprintf("[爬虫-%d]", workerID)
 			workerCtx := WithWorkerContext(context.Background(), workerID)
 
-			for task := range taskChan {
+			for {
+				// 自适应降线程检查
+				if c.client != nil && c.client.GetLimiter() != nil && workerID > c.client.GetLimiter().GetLimit() {
+					return
+				}
+
+				task, ok := <-taskChan
+				if !ok {
+					return
+				}
+
 				line := task.line
 				prods, err := c.FetchProductsByLineWithContext(workerCtx, line.ID, line.ProID)
 				if err == nil {
@@ -583,7 +601,7 @@ func (c *CategoryCrawler) SyncAllCategoriesAndProducts(onProgress func(CategoryS
 					onProgress(curStatus)
 				}
 			}
-		}(w)
+		})
 	}
 
 	wg.Wait()

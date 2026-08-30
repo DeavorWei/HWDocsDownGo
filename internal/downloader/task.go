@@ -95,6 +95,7 @@ func (r *DownloadTaskRunner) Run() error {
 	r.task.FileName = fileName
 	r.task.SavePath = finalPath
 	r.task.DownloadURL = downloadURL
+	_ = r.repo.UpdateDownloadTaskProgress(r.task.ID, r.task.DownloadedBytes, r.task.TotalBytes, r.task.Progress, r.task.SpeedKBps, r.task.Status, r.task.ErrorMsg, finalPath, fileName)
 
 	// 检查并清理已有伪 HTML 登录网页文件或 0 字节损坏文件
 	if _, statErr := os.Stat(finalPath); statErr == nil {
@@ -426,7 +427,7 @@ func (r *DownloadTaskRunner) downloadMultiThread(downloadURL, tempPath, finalPat
 	r.task.Progress = 100.0
 	r.task.DownloadedBytes = totalBytes
 	r.task.SpeedKBps = 0
-	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "")
+	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "", finalPath, r.task.FileName)
 	r.repo.UpdateDocDownloaded(r.task.DocNID, 1, finalPath)
 
 	r.notifyProgress(0)
@@ -596,7 +597,7 @@ func (r *DownloadTaskRunner) downloadSingleThread(downloadURL, tempPath, finalPa
 	r.task.Status = int(StatusCompleted)
 	r.task.Progress = 100.0
 	r.task.SpeedKBps = 0
-	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "")
+	r.repo.UpdateDownloadTaskProgress(r.task.ID, totalBytes, totalBytes, 100.0, 0, int(StatusCompleted), "", finalPath, r.task.FileName)
 	r.repo.UpdateDocDownloaded(r.task.DocNID, 1, finalPath)
 
 	r.notifyProgress(0)
@@ -645,7 +646,7 @@ func (r *DownloadTaskRunner) notifyProgress(speedKBps float64) {
 	r.task.SpeedKBps = speedKBps
 
 	// 存库
-	r.repo.UpdateDownloadTaskProgress(r.task.ID, r.task.DownloadedBytes, r.task.TotalBytes, progress, speedKBps, r.task.Status, r.task.ErrorMsg)
+	r.repo.UpdateDownloadTaskProgress(r.task.ID, r.task.DownloadedBytes, r.task.TotalBytes, progress, speedKBps, r.task.Status, r.task.ErrorMsg, r.task.SavePath, r.task.FileName)
 
 	if r.onProgress != nil {
 		r.onProgress(ProgressEvent{

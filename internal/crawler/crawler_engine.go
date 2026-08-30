@@ -22,13 +22,25 @@ type CrawlerEngine struct {
 	mu         sync.Mutex
 	cancelFunc context.CancelFunc
 	onFinished func(success bool, msg string)
+	limiter    *AdaptiveRateLimiter
 }
 
 func NewCrawlerEngine(catCrawler *CategoryCrawler, docCrawler *DocCrawler, repo *store.Repository) *CrawlerEngine {
+	var limiter *AdaptiveRateLimiter
+	if docCrawler != nil && docCrawler.client != nil {
+		limiter = docCrawler.client.GetLimiter()
+	}
+	if limiter == nil && catCrawler != nil && catCrawler.client != nil {
+		limiter = catCrawler.client.GetLimiter()
+	}
+	if limiter == nil {
+		limiter = NewAdaptiveRateLimiter(8)
+	}
 	return &CrawlerEngine{
 		catCrawler: catCrawler,
 		docCrawler: docCrawler,
 		repo:       repo,
+		limiter:    limiter,
 	}
 }
 
@@ -70,7 +82,7 @@ type crawlWorkerTask struct {
 	catName  string
 }
 
-// crawlProductsConcurrent 并发抓取产品型号列表（支持 1-32 线程，日志包含 [爬虫-X] 编号）
+// crawlProductsConcurrent 并发抓取产品型号列表（支持 1-32 线程自适应降级，遇错随机退避，还报错降为 1 线程）
 func (e *CrawlerEngine) crawlProductsConcurrent(
 	ctx context.Context,
 	prods []store.Product,
@@ -82,16 +94,26 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 		return 0, false
 	}
 
-	cfg := config.GetConfig()
-	numWorkers := 1
-	if cfg.CrawlerThreads > 0 {
-		numWorkers = cfg.CrawlerThreads
-	}
-	if numWorkers > 32 {
-		numWorkers = 32
-	}
+	// 注册并发限制变动时的 UI / 日志通知回调
+	e.limiter.SetOnLimitChange(func(oldLimit, newLimit int, reason string, backoff time.Duration) {
+		if newLimit < oldLimit {
+			if newLimit == 1 {
+				send("   🚨【并发自适应】%s (执行随机退避 %v，切换为 1 线程安全模式)...", reason, backoff.Round(time.Millisecond))
+			} else {
+				send("   ⚠️【并发自适应】%s (执行随机退避 %v)...", reason, backoff.Round(time.Millisecond))
+			}
+		} else if newLimit > oldLimit {
+			send("   ✨【并发平滑恢复】%s...", reason)
+		}
+	})
+
+	// 获取当前自适应协调器允许的并发线程数
+	numWorkers := e.limiter.GetLimit()
 	if numWorkers > len(prods) {
 		numWorkers = len(prods)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
 	}
 
 	logger.Info("启动产品型号并发爬取池",
@@ -124,11 +146,36 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 			defer wg.Done()
 			workerTag := fmt.Sprintf("[爬虫-%d]", workerID)
 
-			for task := range taskChan {
+			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
+				}
+
+				if wsfBlocked.Load() {
+					return
+				}
+
+				// 【自适应降线程核心逻辑】：若当前工作协程编号大于系统当前允许的并发上限，优雅退出
+				if workerID > e.limiter.GetLimit() {
+					logger.Info(fmt.Sprintf("%s 当前并发线程上限已调减为 %d，协程优雅退出", workerTag, e.limiter.GetLimit()),
+						zap.Int("workerId", workerID),
+						zap.Int("currentLimit", e.limiter.GetLimit()),
+					)
+					return
+				}
+
+				// 从任务队列中提取任务
+				var task crawlWorkerTask
+				select {
+				case <-ctx.Done():
+					return
+				case t, ok := <-taskChan:
+					if !ok {
+						return
+					}
+					task = t
 				}
 
 				if wsfBlocked.Load() {
@@ -145,7 +192,35 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 
 				workerCtx := WithWorkerContext(ctx, workerID)
 				e.catCrawler.FetchSubModelsAndVersionsWithContext(workerCtx, prod.ID)
-				docs, err := e.docCrawler.FetchDocsByProductWithContext(workerCtx, prod, task.lineName, task.catName)
+
+				// 抓取文档（支持在遇到 429 等可重试错误时自动退避重试，防止因并发瞬态丢任务）
+				var docs []store.Document
+				var err error
+				const maxTaskRetries = 2
+				for taskAttempt := 1; taskAttempt <= maxTaskRetries; taskAttempt++ {
+					docs, err = e.docCrawler.FetchDocsByProductWithContext(workerCtx, prod, task.lineName, task.catName)
+					if err == nil {
+						break
+					}
+					if IsWsfCheckError(err) || ctx.Err() != nil {
+						break
+					}
+					// 若遇到限流或临时错误且还有重试机会，等待自适应退避后局部重试
+					if taskAttempt < maxTaskRetries {
+						backoff := time.Duration(taskAttempt*1500) * time.Millisecond
+						logger.Warn(fmt.Sprintf("%s 抓取型号文档异常，执行退避后重试 (%d/%d)", workerTag, taskAttempt, maxTaskRetries),
+							zap.String("product", prod.Name),
+							zap.Duration("backoff", backoff),
+							zap.Error(err),
+						)
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(backoff):
+						}
+					}
+				}
+
 				if err == nil && len(docs) > 0 {
 					atomic.AddInt64(&totalDocsCount, int64(len(docs)))
 					send("   %s 📄 型号 [%s] 发现并入库 %d 篇产品文档", workerTag, prod.Name, len(docs))
@@ -165,6 +240,8 @@ func (e *CrawlerEngine) crawlProductsConcurrent(
 						onProgress(int(atomic.LoadInt64(&completedCount)), task.total, fmt.Sprintf("🚨 触发安全拦截: 型号 %s (%s)", prod.Name, workerTag))
 					}
 					return
+				} else if err != nil {
+					logger.Warn(fmt.Sprintf("%s 型号 [%s] 抓取文档失败: %v", workerTag, prod.Name, err))
 				}
 
 				done := atomic.AddInt64(&completedCount, 1)
@@ -198,6 +275,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 		threads = cfg.CrawlerThreads
 	}
 	logger.Info("启动全量深度文档爬取任务", zap.Int("crawlerThreads", threads))
+	e.limiter.Reset(threads)
 
 	logger.SafeGo("full-crawl-main", func() {
 		defer func() {
@@ -215,7 +293,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 			}
 		}
 
-		send("🚀 启动华为官网全量深度文档爬取任务 (并发线程数: %d)...", threads)
+		send("🚀 启动华为官网全量深度文档爬取任务 (初始并发线程数: %d)...", e.limiter.GetLimit())
 		startTime := time.Now()
 
 		// 1. 抓取产品大类与产品线
@@ -262,7 +340,7 @@ func (e *CrawlerEngine) StartFullCrawl(onLog func(string), onProgress func(curre
 				continue
 			}
 			totalProductsCount += len(prods)
-			send("   └─ 成功收录 %d 个产品型号，启动 %d 线程并发解析文档...", len(prods), threads)
+			send("   └─ 成功收录 %d 个产品型号，启动 %d 线程并发解析文档...", len(prods), e.limiter.GetLimit())
 
 			// 3. 并发抓取型号文档
 			docsCount, wsfBlocked := e.crawlProductsConcurrent(ctx, prods, line.Name, line.CategoryID, send, onProgress)
@@ -323,6 +401,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 		zap.String("productId", productID),
 		zap.Int("crawlerThreads", threads),
 	)
+	e.limiter.Reset(threads)
 
 	logger.SafeGo("scoped-crawl-main", func() {
 		defer func() {
@@ -393,7 +472,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			}
 
 			logger.Info("定向抓取产品系列", zap.String("lineName", lineName), zap.String("series", series))
-			send("🚀 启动产品系列 [%s > %s] 定向深度爬取 (并发线程数: %d)...", lineName, series, threads)
+			send("🚀 启动产品系列 [%s > %s] 定向深度爬取 (并发线程数: %d)...", lineName, series, e.limiter.GetLimit())
 
 			// 先确保本地数据库或远程已加载该产品线下的所有型号
 			allProds, _ := e.repo.GetProductsByProductLineIDAndSeries(lineID, series)
@@ -433,7 +512,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			}
 
 			logger.Info("定向抓取产品线", zap.String("lineName", lineName), zap.String("lineId", lineID))
-			send("🚀 启动指定产品线 [%s] 快速深度爬取 (并发线程数: %d)...", lineName, threads)
+			send("🚀 启动指定产品线 [%s] 快速深度爬取 (并发线程数: %d)...", lineName, e.limiter.GetLimit())
 			prods, err := e.catCrawler.FetchProductsByLineWithContext(ctx, lineID, linePID)
 			if err != nil {
 				logger.Error("获取产品型号列表失败", zap.String("lineName", lineName), zap.Error(err))
@@ -463,7 +542,7 @@ func (e *CrawlerEngine) StartScopedCrawl(
 			}
 
 			logger.Info("定向抓取产品大类", zap.String("catName", catName), zap.String("categoryId", categoryID))
-			send("🚀 启动产品大类 [%s] 全量深度爬取 (并发线程数: %d)...", catName, threads)
+			send("🚀 启动产品大类 [%s] 全量深度爬取 (并发线程数: %d)...", catName, e.limiter.GetLimit())
 			lines, _ := e.repo.GetProductLinesByCategoryID(categoryID)
 			if len(lines) == 0 {
 				e.catCrawler.FetchCategories()

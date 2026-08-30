@@ -680,7 +680,7 @@
                       <td class="px-4 py-3.5 text-right space-x-2 whitespace-nowrap">
                         <button
                           v-if="doc.isDownloaded === 1"
-                          @click="openLocalFolder(doc.localPath)"
+                          @click="openLocalFolder(doc.localPath || config.downloadDir)"
                           title="在文件夹中打开"
                           class="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition cursor-pointer"
                         >
@@ -812,6 +812,14 @@
                     class="bg-slate-100 text-slate-700 px-2 py-1 rounded font-mono select-all"
                     >{{ config.downloadDir }}</code
                   >
+                  <button
+                    type="button"
+                    @click="openLocalFolder(config.downloadDir)"
+                    class="p-1 text-slate-500 hover:text-blue-600 rounded cursor-pointer"
+                    title="在资源管理器中打开下载目录"
+                  >
+                    <i class="fa-regular fa-folder-open"></i>
+                  </button>
                 </div>
               </div>
 
@@ -890,8 +898,8 @@
                       </button>
                       <button
                         v-if="task.status === 2"
-                        @click="openLocalFolder(task.savePath)"
-                        title="定位文件"
+                        @click="openLocalFolder(task.savePath || config.downloadDir)"
+                        title="打开保存目录 / 定位文件"
                         class="p-1.5 text-slate-500 hover:text-blue-600 rounded cursor-pointer"
                       >
                         <i class="fa-regular fa-folder-open"></i>
@@ -2712,18 +2720,22 @@
           };
 
           const openLocalFolder = async (path) => {
-            if (!path) {
-              showToast("目标文件或目录路径为空", "warning");
-              return;
-            }
+            const targetPath =
+              (path && path.trim()) ||
+              (config.value && config.value.downloadDir) ||
+              "HWDDGoData/Downloads";
             try {
               const res = await fetch("/api/system/open-folder", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ path }),
+                body: JSON.stringify({ path: targetPath }),
               }).then((r) => r.json());
               if (res.code === 0) {
-                showToast("已在 Windows 资源管理器中打开并定位文件");
+                showToast(
+                  res.data && res.data.message
+                    ? res.data.message
+                    : "已在 Windows 资源管理器中打开",
+                );
               } else {
                 showToast("定位文件失败: " + res.message, "error");
               }
@@ -2804,6 +2816,12 @@
                     (t) => t.id === event.taskId,
                   );
                   if (idx !== -1) {
+                    if (event.savePath) {
+                      downloadTasks.value[idx].savePath = event.savePath;
+                    }
+                    if (event.fileName) {
+                      downloadTasks.value[idx].fileName = event.fileName;
+                    }
                     if (event.status === 2) {
                       downloadTasks.value[idx].progress = 100.0;
                       downloadTasks.value[idx].speedStr = "";

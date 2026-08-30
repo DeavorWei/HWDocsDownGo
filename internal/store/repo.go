@@ -601,9 +601,9 @@ func (r *Repository) GetDownloadTaskByID(id string) (*DownloadTask, error) {
 	return &task, nil
 }
 
-// UpdateDownloadTaskProgress 更新下载任务进度
-func (r *Repository) UpdateDownloadTaskProgress(id string, downloaded int64, total int64, progress float64, speed float64, status int, errMsg string) error {
-	return r.db.Model(&DownloadTask{}).Where("id = ?", id).Updates(map[string]interface{}{
+// UpdateDownloadTaskProgress 更新下载任务进度与路径 (可选附带 savePath 与 fileName)
+func (r *Repository) UpdateDownloadTaskProgress(id string, downloaded int64, total int64, progress float64, speed float64, status int, errMsg string, extra ...string) error {
+	updates := map[string]interface{}{
 		"downloaded_bytes": downloaded,
 		"total_bytes":      total,
 		"progress":         progress,
@@ -611,10 +611,17 @@ func (r *Repository) UpdateDownloadTaskProgress(id string, downloaded int64, tot
 		"status":           status,
 		"error_msg":        errMsg,
 		"updated_at":       time.Now(),
-	}).Error
+	}
+	if len(extra) > 0 && extra[0] != "" {
+		updates["save_path"] = extra[0]
+	}
+	if len(extra) > 1 && extra[1] != "" {
+		updates["file_name"] = extra[1]
+	}
+	return r.db.Model(&DownloadTask{}).Where("id = ?", id).Updates(updates).Error
 }
 
-// GetAllDownloadTasks 获取所有下载任务 (下载中与排队中置顶，已完成排在最后)
+// GetAllDownloadTasks 获取所有下载任务 (下载中与排队中置顶，已完成排在最后，并自动回填对齐已完成任务的本地文件路径)
 func (r *Repository) GetAllDownloadTasks() ([]DownloadTask, error) {
 	var tasks []DownloadTask
 	err := r.db.Order(`
@@ -626,7 +633,28 @@ func (r *Repository) GetAllDownloadTasks() ([]DownloadTask, error) {
 			WHEN 2 THEN 5 
 			ELSE 6 
 		END ASC, updated_at DESC, created_at DESC`).Find(&tasks).Error
-	return tasks, err
+	if err != nil {
+		return nil, err
+	}
+
+	// 自动补偿与对齐已完成任务的保存路径 (若历史记录中 save_path 为空，则从关联文档表回填)
+	for i := range tasks {
+		if tasks[i].SavePath == "" && tasks[i].DocNID != "" {
+			var doc Document
+			if err := r.db.Select("local_path, file_name").Where("nid = ?", tasks[i].DocNID).First(&doc).Error; err == nil {
+				if doc.LocalPath != "" {
+					tasks[i].SavePath = doc.LocalPath
+					_ = r.db.Model(&DownloadTask{}).Where("id = ?", tasks[i].ID).Update("save_path", doc.LocalPath)
+				}
+				if tasks[i].FileName == "" && doc.FileName != "" {
+					tasks[i].FileName = doc.FileName
+					_ = r.db.Model(&DownloadTask{}).Where("id = ?", tasks[i].ID).Update("file_name", doc.FileName)
+				}
+			}
+		}
+	}
+
+	return tasks, nil
 }
 
 // DeleteDownloadTask 删除下载任务
